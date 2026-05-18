@@ -1,5 +1,7 @@
 import json
 import logging
+import csv
+import os
 import hashlib
 import re
 import requests
@@ -32,16 +34,38 @@ class VivaDLQTriageAgent:
         except FileNotFoundError:
             logger.warning("No data/rules.json found. Running strictly on AI Fallback.")
             return {}
+    
+    def _log_to_csv(self, client_id, fingerprint, resolution_type, action):
+        """Appends triage results to a local CSV file to act as the MVP Dashboard."""
+        os.makedirs("reports", exist_ok=True)
+        file_path = "reports/triage_ledger.csv"
+        file_exists = os.path.isfile(file_path)
+        
+        with open(file_path, mode='a', newline='') as file:
+            writer = csv.writer(file)
+            if not file_exists:
+                # Create the header row if the file is brand new
+                writer.writerow(["Timestamp", "ClientID", "Fingerprint", "ResolutionType", "Action"])
+            
+            # Append the new log entry using our timezone-aware fix
+            writer.writerow([
+                datetime.now(timezone.utc).isoformat(),
+                client_id,
+                fingerprint,
+                resolution_type,
+                action
+            ])
 
     def generate_fingerprint(self, client_id, event_type, reason, description):
         """
         Generates a collision-proof, normalized hash.
         Strips numbers and dynamic data from the description to prevent cache-busting.
         """
-        # Normalize description: remove all digits and hex-like patterns
         if description:
-            normalized_desc = re.sub(r'\d+', '', description)
-            normalized_desc = re.sub(r'0x[a-fA-F0-9]+', '', normalized_desc)
+            # FIX: Strip hex memory addresses FIRST before digits destroy the '0x' pattern
+            normalized_desc = re.sub(r'0x[a-fA-F0-9]+', '', description)
+            # Then strip all remaining standalone digits (like thread IDs and timestamps)
+            normalized_desc = re.sub(r'\d+', '', normalized_desc)
         else:
             normalized_desc = "NO_DESC"
 
@@ -120,6 +144,7 @@ class VivaDLQTriageAgent:
             rule = self.check_deterministic_rules(reason, fingerprint)
             if rule:
                 logger.info(f"[HEURISTIC MATCH] Executing action: {rule['action']}")
+                self._log_to_csv(client_id, fingerprint, "Heuristic_Match", rule['action'])
                 return
 
             # 3. Cache Check (Cost: $0, Time: 0ms)
@@ -127,6 +152,7 @@ class VivaDLQTriageAgent:
             if cached_result:
                 logger.info(f"[CACHE HIT] Applying previous AI classification for {fingerprint}.")
                 logger.info(f"Cached Result: {json.dumps(cached_result)}")
+                self._log_to_csv(client_id, fingerprint, "AI_Cache_Hit", cached_result.get("suggested_action", "UNKNOWN"))
                 return
 
             # 4. AI Fallback (Cost: Compute, Time: 1-5s)
@@ -139,6 +165,7 @@ class VivaDLQTriageAgent:
                 "classification": ai_result
             }
             logger.info(f"[AI SUGGESTION READY FOR REVIEW] -> {json.dumps(ai_result)}")
+            self._log_to_csv(client_id, fingerprint, "AI_Cache_Miss", ai_result.get("suggested_action", "Pending Human Review"))
 
         except Exception as e:
             logger.error(f"Failed to triage message: {str(e)}")
