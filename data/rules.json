@@ -1,0 +1,12 @@
+{
+  "rules": {
+    "MissingTransactionDate": {
+      "action": "FIX_AND_RETRY",
+      "source": "heuristics",
+      "parameters": {
+        "default_field": "transactionDate",
+        "fallback_value": "CURRENT_DATE"
+      }
+    }
+  }
+}
