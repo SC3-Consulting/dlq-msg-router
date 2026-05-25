@@ -1,4 +1,26 @@
+# Environment and Secrets
 .venv/
+.env
+
+# Python Built-ins
 __pycache__/
 *.pyc
-.env
+*.pyo
+*.pyd
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Generated Telemetry & Data
+# Ignores all dynamic CSVs so your repo doesn't get dirty every time you run it
+reports/*.csv
+# (Optional) Force git to track a specific sample file if you want it in the repo:
+# !reports/telemetry_dashboard.csv 
+
+# IDEs and OS Specific
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

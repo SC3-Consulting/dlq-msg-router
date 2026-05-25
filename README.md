@@ -1,105 +1,144 @@
-# Viva DLQ Smart Triage Router (Phase 1 MVP)
+# Autonomous DLQ Smart Triage Router (Phase 2)
 
-An intelligent, token-optimized Dead Letter Queue (DLQ) processing engine built for Azure Service Bus. This MVP demonstrates a hybrid deterministic and agentic approach to handling enterprise integration failures.
+An intelligent, non-deterministic error resolution engine for Azure Service Bus. This system minimizes AI token consumption and maximizes operational governance by implementing a layered, defense-in-depth pipeline for Dead Letter Queue (DLQ) processing.
 
-## Architectural Pattern: "Process Patterns, Not Messages"
+## 🏗️ Executive Summary
 
-Enterprise messaging systems generate a long tail of unpredictable errors. Sending every failed message to an LLM is a waste of compute and tokens. This system uses a **Defense-in-Depth Pipeline** to ensure AI is only used as a last resort:
+Enterprise messaging systems generate a long tail of unpredictable errors. Traditional approaches either rely on rigid, hardcoded routing that fails on novel anomalies, or they pipe every failure to an LLM, resulting in exorbitant costs and hallucination risks. 
 
-1. **The Heuristic Engine (Deterministic-First):** Evaluates incoming DLQ messages against a strict `rules.json` file. Known business logic errors (e.g., missing mandatory fields) are categorized instantly, incurring $0 compute cost.
-2. **The MD5 Fingerprinting & Rolling Cache:** Unhandled exceptions (like downstream Java gateway crashes) are stripped of dynamic memory allocation data and timestamps. The resulting normalized string is hashed into a fingerprint. This fingerprint is checked against a rolling 10-minute in-memory cache to prevent redundant LLM invocations for cascading or duplicate errors.
-3. **The LLM Fallback (Agentic):** Net-new, unstructured errors (Cache Misses) are routed to a local LLM to extract root causes and suggest actionable fixes following a strict JSON contract.
+This project implements a **Process Patterns, Not Messages** architecture. It acts as an automated triage pipeline, using deterministic heuristics for known business faults and relying on a strictly governed local LLM only for discovery and classification of unknown anomalies. 
 
-## Project Structure
+### Core Optimizations
+* **Zero-Touch Resolution:** Known structural errors incur $0 compute cost and zero LLM latency.
+* **Dynamic Pattern Extraction:** Utilizes Regex capture groups to dynamically generate error fingerprints (e.g., `missing_field_email`), preventing rule-base bloat.
+* **Human-in-the-Loop Governance:** The AI is locked in a read-only sandbox. It suggests classifications and detection rules, but messages are safely quarantined in a Parking Lot queue until human operators promote the rule.
 
-* `/scripts/producer.py` - Simulates the upstream system (e.g., Salesforce), emitting canonical data model payloads including Happy Path, Deterministic Flaws, and Poison Pills.
-* `/scripts/consumer.py` - Simulates the downstream environment (e.g., SAP). Handles native Azure Service Bus 3-strike retries and explicit dead-lettering.
-* `/src/triage_agent.py` - The core orchestration engine watching the DLQ sub-queue, generating fingerprints, and routing logic.
-* `/data/rules.json` - The local database of deterministic routing rules.
-* `/tests/` - The `pytest` suite proving the core business logic (fingerprinting and caching).
+---
 
-## Core Schemas
+## 🚦 The 5-Gate Triage Pipeline
 
-### 1. The Canonical Input Payload
-The pipeline expects messages in a standard enterprise event format. The producer generates these payloads:
+Every PEEK_LOCKED message from the DLQ is evaluated through strict deterministic gates before invoking agentic capabilities:
 
-```json
-{
-  "metadata": {
-    "eventId": "evt-001",
-    "correlationId": "corr-9901",
-    "sourceSystem": "Salesforce",
-    "eventType": "OrderCreated",
-    "timestamp": "2026-05-18T10:00:00Z"
-  },
-  "payload": {
-    "orderId": "ORD-77321",
-    "clientId": "CLIENT_ACME",
-    "transactionDate": "2026-05-18"
-  }
-}
+1. **Gate A: Anti-Poison Pill:** Isolates message loops (Resubmit-Count >= 3) to prevent consumer crashing and infinite processing loops. Route: `Quarantined`.
+2. **Gate B: Idempotency & Noise Suppression:** Cryptographically hashes the payload and correlation metadata. Suppresses redundant alerts for broken downstream clients spamming the broker. Route: `Dropped`.
+3. **Gate C: Classification Cache:** Rapidly resolves recurring errors via a rolling in-memory cache (10-minute TTL) based on the error signature shape. Route: `Auto_Classified_From_Cache`.
+4. **Gate D: Heuristic Router:** Evaluates Azure native metadata (`dead_letter_reason`, `error_description`) against dynamic JSON business rules. Route: `Auto_Classified`.
+5. **Gate E: Agentic AI Fallback:** Unclassified anomalies trigger local LLM analysis to parse the raw payload, generating a JSON-structured triage contract. Route: `AI_Suggested_Rule_Pending_Approval`.
+
+---
+
+## 📂 Repository Architecture
+
+```text
+├── run_agent.py                            # Main orchestration and polling loop
+├── scripts/
+│   └── setup.sh                            # Idempotent environment initialization script
+├── src/
+│   ├── autonomous_dlq_classifier.py        # Core 5-gate pipeline and broker state management
+│   ├── ai_client.py                        # LLM integration, payload truncation, and JSON salvage
+│   ├── InMemoryCache.py                    # Thread-safe caching for idempotency and classifications
+│   └── flush_queues.py                     # Utility to sterilize Azure queues for clean testing
+├── simulator/
+│   ├── producer.py                         # Generates synthetic enterprise payloads (Happy path + anomalies)
+│   └── consumer.py                         # Simulates downstream rejections and native ASB timeouts
+├── data/
+│   └── rules.json                          # Extensible database of deterministic heuristic rules
+├── tests/
+│   └── test_autonomous_dlq_classifier.py   # Pytest suite for core business logic validation
+├── .env.example                            # Configuration template
+├── requirements.txt                        # Python dependencies
+└── pytest.ini                              # Test configuration
+
 ```
 
-### 2. The AI Classification Contract
-When a message hits the AI Fallback, the LLM is strictly constrained to return this JSON schema. It is never allowed to modify the message itself; it only categorizes and suggests actions.
+---
 
-```json
-{
-  "classification": "string (e.g., DeadLetterQueueMessage)",
-  "suggested_action": "string (e.g., Reprocess or Notify Client)",
-  "confidence": 0.8
-}
-```
-
-## System Outputs & Reporting
-
-### The Triage Ledger (CSV Dashboard)
-To fulfill the MVP requirement for data visibility, the Triage Agent automatically generates a persistent log of its routing decisions. When executed, a `reports/triage_ledger.csv` file is created/appended with the following schema:
-
-| Timestamp | ClientID | Fingerprint | ResolutionType | Action |
-| :--- | :--- | :--- | :--- | :--- |
-| 2026-05-18T18:06:04Z | CLIENT_ACME | 1946f390 | `Heuristic_Match` | FIX_AND_RETRY |
-| 2026-05-18T18:06:36Z | TRIGGER_SAP | dde7cb33 | `AI_Cache_Miss` | Re-queue message |
-| 2026-05-18T18:06:37Z | TRIGGER_SAP | dde7cb33 | `AI_Cache_Hit` | Re-queue message |
-
-Notice how the second `TRIGGER_SAP` error generates an `AI_Cache_Hit` for the exact same fingerprint, proving the deduplication engine bypassed the LLM.
-
-## Local Execution Guide
+## 🚀 Getting Started
 
 ### Prerequisites
-* Azure CLI installed and authenticated (`az login`)
-* Active Azure Service Bus Namespace (Basic Tier) with Azure Service Bus Data Owner RBAC assigned to your identity
-* Ollama running locally (Default model: `llama-local`)
+
 * Python 3.10+
+* Azure CLI authenticated (`az login`) with Azure Service Bus Data Owner RBAC.
+* Ollama running locally (Default model: `llama3.2:latest`)
 
-### Setup
-Clone the repository and initialize the virtual environment:
+### 1. Environment Initialization
+
+Run the initialization script to scaffold the virtual environment and install dependencies:
 
 ```bash
-python -m venv .venv
+bash scripts/setup.sh
 source .venv/bin/activate
+
 ```
 
-Install dependencies:
+### 2. Configuration
+
+Copy the environment template and populate your Azure variables:
 
 ```bash
-pip install azure-identity azure-servicebus requests pytest
+cp .env.example .env
+
 ```
 
-Update `FULLY_QUALIFIED_NAMESPACE` in the python scripts to match your Azure environment.
+Ensure `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE`, `TARGET_QUEUE_NAME`, and `PARKING_LOT_QUEUE_NAME` are correctly defined.
 
-### Running the Live Fire Pipeline
-Execute the following sequentially to view the token-saving metrics in action:
+---
+
+## 🧪 Execution & Simulation
+
+To observe the token-saving metrics and dynamic classification in real-time, execute the pipeline components sequentially across three terminal sessions.
+
+**Terminal 1: Start the Autonomous Agent**
 
 ```bash
-python scripts/producer.py
-python scripts/consumer.py
-python src/triage_agent.py
+python run_agent.py
+
 ```
 
-### Running the Test Suite
-The business logic (Fingerprint normalization, Cache hits, Cache expiration, and Heuristic overrides) is fully tested. To run the suite without hitting Azure or Ollama:
+*The agent will begin polling the DLQ endpoint continuously.*
+
+**Terminal 2: Start the Downstream Simulator (Consumer)**
 
 ```bash
-pytest tests/
+python simulator/consumer.py
+
 ```
+
+*Listens to the main queue, processing happy paths and explicitly rejecting simulated application/infrastructure faults to the DLQ.*
+
+**Terminal 3: Fire the Synthetic Batch (Producer)**
+
+```bash
+python simulator/producer.py
+
+```
+
+*Dispatches a batch of 12 distinct event payloads into the architecture.*
+
+### Observability
+
+Upon execution, a `reports/telemetry_dashboard.csv` is generated dynamically. This ledger logs the timestamp, classification, specific pattern extracted, status, and the agent's confidence score for every message handled.
+
+---
+
+## 🛡️ Testing & Quality Assurance
+
+The core business logic—fingerprint generation, cache TTL expiration, JSON salvage operations, and heuristic overrides—is fully decoupled from Azure infrastructure for rapid local testing.
+
+Execute the test suite:
+
+```bash
+pytest
+```
+
+---
+
+## 🔮 Strategic Roadmap (Phase 3)
+
+As this architecture matures toward a multi-tenant enterprise deployment, the following enhancements are scoped for future iterations:
+
+* **Pub/Sub Migration (TDLQ):** Transitioning from standard Queues to Azure Service Bus Topics and Subscriptions. This will require updating the agent to iterate over dynamically discovered Subscription Dead Letter Queues (TDLQ) rather than a single queue endpoint.
+* **Claim-Check Pattern Integration:** For enterprise payloads exceeding Azure's size limits (e.g., >256KB or >1MB on Premium), the pipeline will be updated to handle Claim-Check tokens, automatically retrieving the heavy payload from Azure Blob Storage prior to AI analysis.
+* **RAG-Powered Context Windowing:** Replacing the static `rules.json` injection with a Vector Database. The AI client will query top-K similar historical rules to provide context without exhausting the LLM's token window as the heuristic database scales.
+
+

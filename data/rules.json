@@ -1,12 +1,69 @@
 {
-  "rules": {
-    "MissingTransactionDate": {
-      "action": "FIX_AND_RETRY",
-      "source": "heuristics",
-      "parameters": {
-        "default_field": "transactionDate",
-        "fallback_value": "CURRENT_DATE"
-      }
+  "routing_rules": [
+    {
+      "rule_id": "infra_001",
+      "severity_score": 10,
+      "classification": "TTL_Expired",
+      "pattern_name": "ttl_expired_in_queue",
+      "condition": "reason == 'TTLExpiredException'",
+      "default_action": "drop_and_notify"
+    },
+    {
+      "rule_id": "infra_002",
+      "severity_score": 10,
+      "classification": "Delivery_Limit_Exceeded",
+      "pattern_name": "consumer_crashed_repeatedly",
+      "condition": "reason == 'MaxDeliveryCountExceeded'",
+      "default_action": "retry"
+    },
+    {
+      "rule_id": "infra_003",
+      "severity_score": 10,
+      "classification": "Routing_Topology_Error",
+      "pattern_name": "infinite_forwarding_loop",
+      "condition": "reason == 'MaxTransferHopCountExceeded'",
+      "default_action": "escalate"
+    },
+    {
+      "rule_id": "infra_004",
+      "severity_score": 10,
+      "classification": "Capacity_Limit_Exceeded",
+      "pattern_name": "payload_exceeds_broker_limits",
+      "condition": "reason in ['HeaderSizeExceeded', 'MessageSizeExceeded']",
+      "default_action": "drop_and_notify"
+    },
+    {
+      "rule_id": "app_001",
+      "severity_score": 50,
+      "classification": "Schema_Validation_Failed",
+      "pattern_name": "validation_failed_generic",
+      "condition": "reason == 'ValidationFailed'",
+      "pattern_regex": "missing mandatory field: '(\\w+)'",
+      "default_action": "fix_and_retry"
+    },
+    {
+      "rule_id": "app_002",
+      "severity_score": 50,
+      "classification": "Payload_Malformed",
+      "pattern_name": "json_syntax_broken",
+      "condition": "reason == 'MalformedMessage'",
+      "default_action": "escalate"
+    },
+    {
+      "rule_id": "app_003",
+      "severity_score": 50,
+      "classification": "Circuit_Breaker_Open",
+      "pattern_name": "upstream_refused_traffic",
+      "condition": "reason == 'CircuitBreakerOpenException'",
+      "default_action": "retry"
+    },
+    {
+      "rule_id": "app_004",
+      "severity_score": 50,
+      "classification": "Business_Logic_Violation",
+      "pattern_name": "custom_client_rejection",
+      "condition": "reason == 'Business_Rule_Violation'",
+      "default_action": "escalate"
     }
-  }
+  ]
 }
