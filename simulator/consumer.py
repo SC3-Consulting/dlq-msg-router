@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -9,15 +10,13 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("IntegrationConsumer")
 
-def main():
-    fully_qualified_namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE")
-    queue_name = os.getenv("TARGET_QUEUE_NAME")
-
-    if not fully_qualified_namespace or not queue_name:
-        logger.error("Missing Service Bus configurations in .env")
+def process_queue(queue_config, fully_qualified_namespace, credential):
+    """Worker function to simulate downstream rejections for a specific queue."""
+    queue_name = queue_config.get("name")
+    if not queue_name:
         return
 
-    credential = DefaultAzureCredential()
+    thread_logger = logging.getLogger(f"Consumer-{queue_name}")
     
     with ServiceBusClient(fully_qualified_namespace, credential) as client:
         with client.get_queue_receiver(
@@ -25,7 +24,7 @@ def main():
             receive_mode=ServiceBusReceiveMode.PEEK_LOCK
         ) as receiver:
             
-            logger.info(f"Consumer listening on {queue_name}...")
+            thread_logger.info(f"Consumer listening on {queue_name}...")
             
             for message in receiver:
                 try:
@@ -34,7 +33,7 @@ def main():
                         raw_payload = b"".join(message.body).decode('utf-8')
                         payload = json.loads(raw_payload)
                     except json.JSONDecodeError:
-                        logger.error(f"Rejecting {message.message_id}: Malformed JSON")
+                        thread_logger.error(f"Rejecting {message.message_id}: Malformed JSON")
                         receiver.dead_letter_message(message, reason="MalformedMessage", 
                             error_description="Invalid JSON format.")
                         continue
@@ -46,7 +45,7 @@ def main():
                     if payload.get("mock_infra_003"):
                         receiver.dead_letter_message(message, reason="MaxTransferHopCountExceeded", error_description="Routing loop")
                         continue
-                    if payload.get("mock_infra_004"): # NEW: Tests infra_004 rule
+                    if payload.get("mock_infra_004"):
                         receiver.dead_letter_message(message, reason="MessageSizeExceeded", error_description="Payload exceeds broker limits")
                         continue
 
@@ -70,9 +69,43 @@ def main():
                     receiver.complete_message(message)
 
                 except Exception as e:
-                    logger.error(f"Consumer hard-crashed on {message.message_id}: {e}")
-                    receiver.abandon_message(message)
+                    thread_logger.error(f"Consumer hard-crashed on {message.message_id}: {e}")
+                    # CRITICAL FIX: Nested try/except to prevent cascading crashes if broker is offline
+                    try:
+                        receiver.abandon_message(message)
+                    except Exception as abandon_err:
+                        thread_logger.error(f"Failed to abandon message (Broker offline?): {abandon_err}")
                     continue
+
+def main():
+    fully_qualified_namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE")
+    sources_json = os.getenv("ASB_SOURCES", "[]")
+
+    if not fully_qualified_namespace:
+        logger.error("Missing SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE in .env")
+        return
+
+    try:
+        target_sources = json.loads(sources_json)
+        if not target_sources:
+            logger.warning("No queues configured in ASB_SOURCES.")
+            return
+    except json.JSONDecodeError:
+        logger.error("ASB_SOURCES environment variable must be a valid JSON array.")
+        return
+
+    credential = DefaultAzureCredential()
+
+    # Launch a threaded consumer for every queue configured in the multi-tenant architecture
+    with ThreadPoolExecutor(max_workers=len(target_sources)) as executor:
+        for source in target_sources:
+            if source.get("type") == "queue":
+                executor.submit(process_queue, source, fully_qualified_namespace, credential)
+            else:
+                logger.warning(f"Simulator currently only supports 'queue' types. Skipping {source.get('name')}.")
+                
+        # Block main thread to keep executor alive
+        executor.shutdown(wait=True)
 
 if __name__ == "__main__":
     main()

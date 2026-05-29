@@ -15,6 +15,8 @@ htmlcov/
 
 # Generated Telemetry & Data
 # Ignores all dynamic CSVs so your repo doesn't get dirty every time you run it
+# Local Data & State
+data/idempotency.db*
 reports/*.csv
 # (Optional) Force git to track a specific sample file if you want it in the repo:
 # !reports/telemetry_dashboard.csv 

@@ -1,5 +1,5 @@
 {
-  "routing_rules": [
+  "global_rules": [
     {
       "rule_id": "infra_001",
       "severity_score": 10,
@@ -56,14 +56,18 @@
       "pattern_name": "upstream_refused_traffic",
       "condition": "reason == 'CircuitBreakerOpenException'",
       "default_action": "retry"
-    },
-    {
-      "rule_id": "app_004",
-      "severity_score": 50,
-      "classification": "Business_Logic_Violation",
-      "pattern_name": "custom_client_rejection",
-      "condition": "reason == 'Business_Rule_Violation'",
-      "default_action": "escalate"
     }
-  ]
+  ],
+  "queue_overrides": {
+    "viva-integration-queue": [
+      {
+        "rule_id": "app_004",
+        "severity_score": 50,
+        "classification": "Business_Logic_Violation",
+        "pattern_name": "custom_client_rejection",
+        "condition": "reason == 'Business_Rule_Violation'",
+        "default_action": "escalate"
+      }
+    ]
+  }
 }

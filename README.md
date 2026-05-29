@@ -1,144 +1,140 @@
-# Autonomous DLQ Smart Triage Router (Phase 2)
+# Autonomous DLQ Triage Pipeline
 
-An intelligent, non-deterministic error resolution engine for Azure Service Bus. This system minimizes AI token consumption and maximizes operational governance by implementing a layered, defense-in-depth pipeline for Dead Letter Queue (DLQ) processing.
+This repository provisions and operates a non-deterministic error resolution engine for Azure Service Bus Dead Letter Queues (DLQ).
 
-## 🏗️ Executive Summary
+## Scope
 
-Enterprise messaging systems generate a long tail of unpredictable errors. Traditional approaches either rely on rigid, hardcoded routing that fails on novel anomalies, or they pipe every failure to an LLM, resulting in exorbitant costs and hallucination risks. 
+- Implements a "Process Patterns, Not Messages" principle to handle message failures at scale.
+- Natively supports both Queue DLQs and Topic Subscription DLQs via dynamic JSON configuration mapping.
+- Utilises deterministic heuristics for known business faults to minimise compute latency and token consumption.
+- Employs a strictly governed LLM fallback solely for the discovery, classification, and clustering of unknown anomalies.
+- Supports local LLM providers (e.g., Ollama) for the initial PoC phase, with an extensible design targeting Azure AI Foundry OpenAI Service for production state.
+- Designed for highly sensitive message payloads (e.g., financial transactions) where fully agentic message modification and routing are deemed too unpredictable and risky.
 
-This project implements a **Process Patterns, Not Messages** architecture. It acts as an automated triage pipeline, using deterministic heuristics for known business faults and relying on a strictly governed local LLM only for discovery and classification of unknown anomalies. 
+## Local Development vs Cloud Target
 
-### Core Optimizations
-* **Zero-Touch Resolution:** Known structural errors incur $0 compute cost and zero LLM latency.
-* **Dynamic Pattern Extraction:** Utilizes Regex capture groups to dynamically generate error fingerprints (e.g., `missing_field_email`), preventing rule-base bloat.
-* **Human-in-the-Loop Governance:** The AI is locked in a read-only sandbox. It suggests classifications and detection rules, but messages are safely quarantined in a Parking Lot queue until human operators promote the rule.
+To maintain a clear segregation between the MVP and the production architecture, the environment dependencies are strictly bifurcated:
 
----
+* **Local MVP (Current State):** Utilises local `dbm` and in-memory caches. AI triage is executed via a locally hosted Ollama container (e.g., `llama3.2:latest`) to prevent token costs during testing. Emulators generate synthetic Azure Service Bus traffic.
+* **Cloud Target (Future State):** Will migrate caching to Azure Cache for Redis. The AI integration will point to Azure AI Foundry (OpenAI Service) via managed identities to ensure enterprise-grade security and compliance boundary enforcement.
 
-## 🚦 The 5-Gate Triage Pipeline
+## Delivery Principles
 
-Every PEEK_LOCKED message from the DLQ is evaluated through strict deterministic gates before invoking agentic capabilities:
+- UK English documentation and naming conventions.
+- AI is restricted to read-only analysis; it cannot autonomously modify message payloads or alter routing rules.
+- Deterministic processing is prioritised to efficiently handle the vast majority of predictable, repeating errors, reserving AI compute for high-value anomaly detection.
 
-1. **Gate A: Anti-Poison Pill:** Isolates message loops (Resubmit-Count >= 3) to prevent consumer crashing and infinite processing loops. Route: `Quarantined`.
-2. **Gate B: Idempotency & Noise Suppression:** Cryptographically hashes the payload and correlation metadata. Suppresses redundant alerts for broken downstream clients spamming the broker. Route: `Dropped`.
-3. **Gate C: Classification Cache:** Rapidly resolves recurring errors via a rolling in-memory cache (10-minute TTL) based on the error signature shape. Route: `Auto_Classified_From_Cache`.
-4. **Gate D: Heuristic Router:** Evaluates Azure native metadata (`dead_letter_reason`, `error_description`) against dynamic JSON business rules. Route: `Auto_Classified`.
-5. **Gate E: Agentic AI Fallback:** Unclassified anomalies trigger local LLM analysis to parse the raw payload, generating a JSON-structured triage contract. Route: `AI_Suggested_Rule_Pending_Approval`.
+## The 5-Gate Triage Architecture
+To ensure zero-trust security and deterministic routing, every Dead Letter message passes through a strict evaluation pipeline:
 
----
+1. **Gate A: PII Scrubber & Poison Pill Quarantine** - Masks sensitive data (Luhn validation) and immediately quarantines messages exceeding the max delivery count.
+2. **Gate B: Idempotency Store** - Prevents infinite loops by hashing message correlation IDs and dropping duplicates via a local `dbm` cache.
+3. **Gate C: Classification Cache** - Bypasses AI and heuristic engines for identical error shapes processed within the TTL window.
+4. **Gate D: Heuristics Engine (Multi-Tenant)** - Evaluates messages against deterministic JSON rules. Supports tenant-specific overrides based on the origin queue.
+5. **Gate E: AI Fallback** - Unknown anomalies are routed to a local LLM for rule suggestion and quarantined in a human-review Parking Lot queue.
 
-## 📂 Repository Architecture
+## ⚙️ Multi-Tenant Configuration
+The agent supports dynamic scaling across multiple Service Bus entities without duplicating deployments. Configuration is handled via a JSON array in the `.env` file:
+
+```env
+ASB_SOURCES=[{"type": "queue", "name": "tenant-a-queue"}, {"type": "queue", "name": "tenant-b-queue"}] 
+```
+Each source initialises its own asynchronous processing thread while sharing the centralized Idempotency Store and Classification Cache.
+
+### Scaling to 600+ Queues (Target State):
+Maintaining a hardcoded JSON array for hundreds of queues is an operational anti-pattern that leads to .env file bloat and requires manual deployment updates for every new tenant. In the production target state, the ASB_SOURCES variable will be deprecated in favor of:
+
+1. **Dynamic Polling (Pull):** Utilising ServiceBusAdministrationClient to programmatically query the namespace on boot, list all queues, and dynamically assign threads only to queues where dead_letter_message_count > 0.
+
+2. **Event-Driven (Push):** Utilising Azure Event Grid to detect DLQ messages globally and trigger a serverless Azure Function orchestrator, eliminating idle polling entirely.
+
+### Supported Execution Actions
+* `drop`: Deletes the message silently (e.g., expired TTL).
+* `drop_and_notify`: Deletes the message and alerts the upstream client.
+* `retry`: Re-enqueues the message to the main queue (e.g., transient outages).
+* `fix_and_retry`: Auto-heals structural payload issues and re-enqueues.
+* `escalate`: Routes to the parking lot queue for human review.
+
+## Repository Layout
 
 ```text
-├── run_agent.py                            # Main orchestration and polling loop
-├── scripts/
-│   └── setup.sh                            # Idempotent environment initialization script
+sc3-Autonomous-DLQ/
+│
+├── docs/                           
+│   └── ops_guide.md                        # Runbook for parking lot workflows and dependencies
+│
 ├── src/
+│   ├── run_agent.py                        # Main orchestration and polling loop
 │   ├── autonomous_dlq_classifier.py        # Core 5-gate pipeline and broker state management
+│   ├── action_executor.py                  # Command pattern implementations for DLQ actions
 │   ├── ai_client.py                        # LLM integration, payload truncation, and JSON salvage
-│   ├── InMemoryCache.py                    # Thread-safe caching for idempotency and classifications
-│   └── flush_queues.py                     # Utility to sterilize Azure queues for clean testing
+│   └── state_managers.py                   # Thread-safe caching for idempotency and classifications
+│
 ├── simulator/
-│   ├── producer.py                         # Generates synthetic enterprise payloads (Happy path + anomalies)
+│   ├── producer.py                         # Generates synthetic enterprise payloads
 │   └── consumer.py                         # Simulates downstream rejections and native ASB timeouts
+│
 ├── data/
-│   └── rules.json                          # Extensible database of deterministic heuristic rules
-├── tests/
-│   └── test_autonomous_dlq_classifier.py   # Pytest suite for core business logic validation
+│   └── rules.json                          # Multi-tenant database of deterministic heuristic rules
+│
+├── scripts/
+│   └── setup.sh                            # Idempotent environment initialisation script
+│
+├── tests/                                  # Pytest suite for core business logic validation
 ├── .env.example                            # Configuration template
-├── requirements.txt                        # Python dependencies
-└── pytest.ini                              # Test configuration
-
+└── requirements.txt                        # Python dependencies
 ```
 
----
+## Quick Start
 
-## 🚀 Getting Started
+### Preconditions & Operator Checklists
 
-### Prerequisites
+* [ ] Python 3.10+
+* [ ] Azure CLI authenticated (`az login`) with Azure Service Bus Data Owner RBAC.
+* [ ] Ollama running locally (Default model: `llama3.2:latest`)
 
-* Python 3.10+
-* Azure CLI authenticated (`az login`) with Azure Service Bus Data Owner RBAC.
-* Ollama running locally (Default model: `llama3.2:latest`)
-
-### 1. Environment Initialization
-
-Run the initialization script to scaffold the virtual environment and install dependencies:
+### 1. Environment Initialisation
+Run the initialisation script to scaffold the virtual environment and install dependencies:
 
 ```bash
 bash scripts/setup.sh
 source .venv/bin/activate
-
 ```
-
 ### 2. Configuration
-
 Copy the environment template and populate your Azure variables:
 
 ```bash
 cp .env.example .env
-
 ```
+Ensure SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE, ASB_SOURCES, and PARKING_LOT_QUEUE_NAME are correctly defined.
 
-Ensure `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE`, `TARGET_QUEUE_NAME`, and `PARKING_LOT_QUEUE_NAME` are correctly defined.
+Operators should also tune the polling limits (ASB_MAX_MESSAGE_COUNT, ASB_MAX_WAIT_TIME) and cache TTLs (IDEMPOTENCY_TTL_SECONDS, CLASSIFICATION_TTL_SECONDS) based on expected traffic volumes.
 
----
-
-## 🧪 Execution & Simulation
-
-To observe the token-saving metrics and dynamic classification in real-time, execute the pipeline components sequentially across three terminal sessions.
+### 3. Execution & Simulation
+To observe the pipeline in real-time, execute the components sequentially across three terminal sessions from the root directory:
 
 **Terminal 1: Start the Autonomous Agent**
 
 ```bash
-python run_agent.py
-
+python -m src.run_agent
 ```
-
-*The agent will begin polling the DLQ endpoint continuously.*
-
-**Terminal 2: Start the Downstream Simulator (Consumer)**
+**Terminal 2: Start the Simulator (Consumer)**
 
 ```bash
 python simulator/consumer.py
-
 ```
-
-*Listens to the main queue, processing happy paths and explicitly rejecting simulated application/infrastructure faults to the DLQ.*
-
 **Terminal 3: Fire the Synthetic Batch (Producer)**
 
 ```bash
 python simulator/producer.py
-
 ```
+Upon execution, a reports/telemetry_dashboard.csv is dynamically generated, logging the timestamp, classification, specific pattern extracted, status, and the agent's confidence score for every message handled.
 
-*Dispatches a batch of 12 distinct event payloads into the architecture.*
-
-### Observability
-
-Upon execution, a `reports/telemetry_dashboard.csv` is generated dynamically. This ledger logs the timestamp, classification, specific pattern extracted, status, and the agent's confidence score for every message handled.
-
----
-
-## 🛡️ Testing & Quality Assurance
-
-The core business logic—fingerprint generation, cache TTL expiration, JSON salvage operations, and heuristic overrides—is fully decoupled from Azure infrastructure for rapid local testing.
-
-Execute the test suite:
-
-```bash
-pytest
-```
-
----
-
-## 🔮 Strategic Roadmap (Phase 3)
-
+## Strategic Roadmap
 As this architecture matures toward a multi-tenant enterprise deployment, the following enhancements are scoped for future iterations:
 
-* **Pub/Sub Migration (TDLQ):** Transitioning from standard Queues to Azure Service Bus Topics and Subscriptions. This will require updating the agent to iterate over dynamically discovered Subscription Dead Letter Queues (TDLQ) rather than a single queue endpoint.
-* **Claim-Check Pattern Integration:** For enterprise payloads exceeding Azure's size limits (e.g., >256KB or >1MB on Premium), the pipeline will be updated to handle Claim-Check tokens, automatically retrieving the heavy payload from Azure Blob Storage prior to AI analysis.
-* **RAG-Powered Context Windowing:** Replacing the static `rules.json` injection with a Vector Database. The AI client will query top-K similar historical rules to provide context without exhausting the LLM's token window as the heuristic database scales.
+**Claim-Check Pattern Integration:** To maintain a lightweight parking lot queue, the message content from the DLQ will be persisted to Azure Blob Storage, with only a reference pointer placed on the parking lot queue.
 
+**Taxonomy Decoupling:** Full extraction of the action glossary and classification definitions from the agent prompt into a remote configuration state to allow operational teams to manage definitions without modifying code.
 
+**Advanced Telemetry Dashboarding:** Migration from the MVP CSV logging to Azure Log Analytics workspaces, visualised via PowerBI or Jupyter Notebooks to track rule hit rates, AI triage efficiency, and top DLQ-generating clients.
