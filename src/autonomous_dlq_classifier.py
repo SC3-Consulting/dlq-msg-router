@@ -85,7 +85,7 @@ class AutonomousDLQClassifier:
                     except Exception as abandon_err:
                         self.logger.error(f"Failed to safely abandon message {message.message_id}: {abandon_err}")
                 else:
-                    # Andy's "crash the app" scenario
+                    # "crash the app" scenario
                     self.dlq_receiver.abandon_message(message)
 
     def _classify_single_message(self, message):
