@@ -53,6 +53,13 @@ class LocalOllamaClient:
         self.base_url = os.getenv("OLLAMA_ENDPOINT")
         self.logger = logging.getLogger("LocalOllamaClient")
         self.scrubber = PIIScrubber()
+
+        raw_timeout = os.getenv("OLLAMA_TIMEOUT", "240")
+        try:
+            self.timeout = int(raw_timeout)
+        except ValueError:
+            self.logger.warning(f"Invalid OLLAMA_TIMEOUT '{raw_timeout}'. Defaulting to 240.")
+            self.timeout = 240
         
         # Parameterise AI Context Window with safe casting for OS-level config errors
         raw_ctx = os.getenv("OLLAMA_NUM_CTX", "4096")
@@ -111,7 +118,7 @@ class LocalOllamaClient:
         self.logger.info(f"Invoking Ollama model: {self.model_name} for client: {client_id}")
         
         try:
-            response = requests.post(self.base_url, json=request_payload, timeout=240)
+            response = requests.post(self.base_url, json=request_payload, timeout=self.timeout)
             response.raise_for_status()
             return response.json().get("response", "{}")
             

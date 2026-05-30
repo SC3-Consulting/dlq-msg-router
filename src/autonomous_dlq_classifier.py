@@ -76,7 +76,8 @@ class AutonomousDLQClassifier:
             try:
                 self._classify_single_message(message)
             except Exception as e:
-                self.logger.error(f"Critical pipeline failure processing message {message.message_id}: {e}")
+                # exc_info=True captures the full stack trace for operational debugging
+                self.logger.error(f"Critical pipeline failure processing message {message.message_id}: {e}", exc_info=True)
                 # Explicitly abandon message on catastrophic loop failure to clear "Ghost Locks"
                 # FEATURE FLAG: Toggle nested exception safety based on Ops preference
                 if os.getenv("ENABLE_NESTED_BROKER_EXCEPTIONS", "True").lower() == "true":
