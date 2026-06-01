@@ -1,0 +1,8 @@
+-r requirements.txt
+pytest>=8.0.0
+black>=24.0.0
+isort>=5.13.0
+pylint>=3.0.0
+mypy>=1.8.0
+pytest-cov>=4.1.0
+types-requests>=2.31.0

@@ -39,7 +39,24 @@
       "pattern_name": "validation_failed_generic",
       "condition": "reason == 'ValidationFailed'",
       "pattern_regex": "missing mandatory field: '(\\w+)'",
-      "default_action": "fix_and_retry"
+      "default_action": "fix_and_retry",
+      "safe_defaults_map": {
+        "transaction_amount": 0.0,
+        "discount_applied": 0.0,
+        "tax_amount": 0.0,
+        "retry_count": 0,
+        "priority_level": 0,
+        "is_active": false,
+        "is_deleted": false,
+        "requires_sync": true,
+        "status": "UNKNOWN",
+        "customer_id": "UNASSIGNED",
+        "currency_code": "UNSPECIFIED",
+        "description": "N/A",
+        "metadata": {},
+        "tags": [],
+        "created_at": "1970-01-01T00:00:00Z"
+      }
     },
     {
       "rule_id": "app_002",

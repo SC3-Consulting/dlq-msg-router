@@ -15,8 +15,8 @@ This repository provisions and operates a non-deterministic error resolution eng
 
 To maintain a clear segregation between the MVP and the production architecture, the environment dependencies are strictly bifurcated:
 
-* **Local MVP (Current State):** Utilises local `dbm` and in-memory caches. AI triage is executed via a locally hosted Ollama container (e.g., `llama3.2:latest`) to prevent token costs during testing. Emulators generate synthetic Azure Service Bus traffic.
-* **Cloud Target (Future State):** Will migrate caching to Azure Cache for Redis. The AI integration will point to Azure AI Foundry (OpenAI Service) via managed identities to ensure enterprise-grade security and compliance boundary enforcement.
+* **Local MVP (Current State):** Utilised via Docker Compose. State relies on local `dbm` and in-memory caches persisted via volume mounts. AI triage is executed via a locally hosted Ollama container to prevent token costs during testing. Emulators generate synthetic Azure Service Bus traffic.
+* **Cloud Target (Future State):** Deployed as an Azure Container App. Will migrate caching to Azure Cache for Redis. The AI integration will point to Azure AI Foundry via managed identities to ensure enterprise-grade security and compliance boundary enforcement.
 
 ## Delivery Principles
 
@@ -25,49 +25,59 @@ To maintain a clear segregation between the MVP and the production architecture,
 - Deterministic processing is prioritised to efficiently handle the vast majority of predictable, repeating errors, reserving AI compute for high-value anomaly detection.
 
 ## The 5-Gate Triage Architecture
-To ensure zero-trust security and deterministic routing, every Dead Letter message passes through a strict evaluation pipeline:
+
+To ensure strict payload security and deterministic routing, every Dead Letter message passes through an evaluation pipeline:
 
 1. **Gate A: PII Scrubber & Poison Pill Quarantine** - Masks sensitive data (Luhn validation) and immediately quarantines messages exceeding the max delivery count.
-2. **Gate B: Idempotency Store** - Prevents infinite loops by hashing message correlation IDs and dropping duplicates via a local `dbm` cache.
+2. **Gate B: Idempotency Store** - Prevents infinite loops by hashing message correlation IDs and dropping duplicates via a local cache.
 3. **Gate C: Classification Cache** - Bypasses AI and heuristic engines for identical error shapes processed within the TTL window.
-4. **Gate D: Heuristics Engine (Multi-Tenant)** - Evaluates messages against deterministic JSON rules. Supports tenant-specific overrides based on the origin queue.
-5. **Gate E: AI Fallback** - Unknown anomalies are routed to a local LLM for rule suggestion and quarantined in a human-review Parking Lot queue.
+4. **Gate D: Heuristics Engine** - Evaluates messages against deterministic JSON rules. Supports queue-specific logic overrides.
+5. **Gate E: AI Fallback** - Unknown anomalies are routed to the LLM for rule suggestion and quarantined in a human-review Parking Lot queue.
 
-## ⚙️ Multi-Tenant Configuration
-The agent supports dynamic scaling across multiple Service Bus entities without duplicating deployments. Configuration is handled via a JSON array in the `.env` file:
+## Multi-Queue Configuration and Scalability
 
-```env
-ASB_SOURCES=[{"type": "queue", "name": "tenant-a-queue"}, {"type": "queue", "name": "tenant-b-queue"}] 
+This application is scoped to run within a **single Azure tenant**. If processing requires isolation across multiple separate ASB namespaces (e.g., separating Premium tier traffic from Standard tier noisy neighbours), operational teams should deploy a separate container instance per namespace. 
+
+Within a single namespace, the agent supports dynamic scaling across hundreds of Service Bus entities through the following operational models:
+
+### 1. Small-Scale Deployments
+
+Configuration is handled via a JSON array in the `.env` file:
+
 ```
-Each source initialises its own asynchronous processing thread while sharing the centralized Idempotency Store and Classification Cache.
+ASB_SOURCES=[{"type": "queue", "name": "app-a-queue"}, {"type": "queue", "name": "app-b-queue"}] 
+```
 
-### Scaling to 600+ Queues (Target State):
-Maintaining a hardcoded JSON array for hundreds of queues is an operational anti-pattern that leads to .env file bloat and requires manual deployment updates for every new tenant. In the production target state, the ASB_SOURCES variable will be deprecated in favor of:
+### 2. Large-Scale Deployments (600+ Queues)
 
-1. **Dynamic Polling (Pull):** Utilising ServiceBusAdministrationClient to programmatically query the namespace on boot, list all queues, and dynamically assign threads only to queues where dead_letter_message_count > 0.
+Maintaining a hardcoded JSON array for hundreds of queues is an operational anti-pattern. This architecture addresses scale via:
 
-2. **Event-Driven (Push):** Utilising Azure Event Grid to detect DLQ messages globally and trigger a serverless Azure Function orchestrator, eliminating idle polling entirely.
+* **Dynamic Discovery:** Utilises the `ServiceBusAdministrationClient` to programmatically query the namespace on boot, automatically discovering all eligible queues.
+* **Exclusion Filters:** Utilises the `EXCLUDED_QUEUES` environment variable to blacklist specific topics or queues from the dynamic discovery process, isolating operational traffic.
+* **Bounded Concurrency (Polling):** The agent does not assign a thread to every discovered DLQ simultaneously, which would cause resource exhaustion. Instead, it works through the discovered list using a fixed ThreadPool up to the `MAX_CONCURRENT_QUEUES` limit. Once the batch is processed, it initiates the next polling cycle. DLQs are not latency-sensitive, so this sequential polling ensures stability.
+* **Event-Driven Limitations:** While Azure Event Grid can push notifications, it is restricted when interacting with private endpoint-secured resources and risks overwhelming the consumer if the grid drops events. Bounded polling guarantees reliable, persistent processing.
 
 ### Supported Execution Actions
+
 * `drop`: Deletes the message silently (e.g., expired TTL).
 * `drop_and_notify`: Deletes the message and alerts the upstream client.
 * `retry`: Re-enqueues the message to the main queue (e.g., transient outages).
-* `fix_and_retry`: Auto-heals structural payload issues and re-enqueues.
+* `fix_and_retry`: Auto-heals structural payload issues via mapped safe defaults and re-enqueues.
 * `escalate`: Routes to the parking lot queue for human review.
 
 ## Repository Layout
 
-```text
+```
 sc3-Autonomous-DLQ/
 │
 ├── docs/                           
-│   └── ops_guide.md                        # Runbook for parking lot workflows and dependencies
+│   └── ops_guide.md                        # Runbook for workflows and dependencies
 │
 ├── src/
-│   ├── run_agent.py                        # Main orchestration and polling loop
+│   ├── run_agent.py                        # Main orchestration and bounded polling loop
 │   ├── autonomous_dlq_classifier.py        # Core 5-gate pipeline and broker state management
 │   ├── action_executor.py                  # Command pattern implementations for DLQ actions
-│   ├── ai_client.py                        # LLM integration, payload truncation, and JSON salvage
+│   ├── ai_client.py                        # LLM Factory, payload truncation, and JSON salvage
 │   └── state_managers.py                   # Thread-safe caching for idempotency and classifications
 │
 ├── simulator/
@@ -75,63 +85,58 @@ sc3-Autonomous-DLQ/
 │   └── consumer.py                         # Simulates downstream rejections and native ASB timeouts
 │
 ├── data/
-│   └── rules.json                          # Multi-tenant database of deterministic heuristic rules
-│
-├── scripts/
-│   └── setup.sh                            # Idempotent environment initialisation script
+│   └── rules.json                          # Database of deterministic heuristic rules
 │
 ├── tests/                                  # Pytest suite for core business logic validation
-├── .env.example                            # Configuration template
-└── requirements.txt                        # Python dependencies
+├── Dockerfile                              # Multi-stage production container blueprint
+├── docker-compose.yml                      # Local environment orchestration
+├── requirements.txt                        # Production Python dependencies
+└── requirements-dev.txt                    # CI/CD and linting dependencies
 ```
 
-## Quick Start
+## Quick Start (Dockerized MVP)
 
 ### Preconditions & Operator Checklists
 
-* [ ] Python 3.10+
+* [ ] Docker and Docker Compose installed.
 * [ ] Azure CLI authenticated (`az login`) with Azure Service Bus Data Owner RBAC.
-* [ ] Ollama running locally (Default model: `llama3.2:latest`)
+* [ ] A native local instance of Ollama running on the host machine (Default model: `llama3.2:latest`).
 
 ### 1. Environment Initialisation
-Run the initialisation script to scaffold the virtual environment and install dependencies:
 
-```bash
-bash scripts/setup.sh
-source .venv/bin/activate
-```
-### 2. Configuration
 Copy the environment template and populate your Azure variables:
 
-```bash
+```
 cp .env.example .env
 ```
-Ensure SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE, ASB_SOURCES, and PARKING_LOT_QUEUE_NAME are correctly defined.
 
-Operators should also tune the polling limits (ASB_MAX_MESSAGE_COUNT, ASB_MAX_WAIT_TIME) and cache TTLs (IDEMPOTENCY_TTL_SECONDS, CLASSIFICATION_TTL_SECONDS) based on expected traffic volumes.
+Ensure `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE`, `ASB_SOURCES`, and `PARKING_LOT_QUEUE_NAME` are correctly defined.
 
-### 3. Execution & Simulation
+### 2. Execution & Simulation
+
 To observe the pipeline in real-time, execute the components sequentially across three terminal sessions from the root directory:
 
-**Terminal 1: Start the Autonomous Agent**
-
-```bash
-python -m src.run_agent
+**Terminal 1: Start the Autonomous Agent (via Docker)**
+This maps your local Azure Entra ID credentials into the container and links it to your host's Ollama instance.
 ```
-**Terminal 2: Start the Simulator (Consumer)**
+docker-compose up --build -d
+```
 
-```bash
+**Terminal 2: Start the Simulator (Consumer)**
+```
 python simulator/consumer.py
 ```
-**Terminal 3: Fire the Synthetic Batch (Producer)**
 
-```bash
+**Terminal 3: Fire the Synthetic Batch (Producer)**
+```
 python simulator/producer.py
 ```
-Upon execution, a reports/telemetry_dashboard.csv is dynamically generated, logging the timestamp, classification, specific pattern extracted, status, and the agent's confidence score for every message handled.
+
+Upon execution, a `reports/telemetry_dashboard.csv` is dynamically generated, logging the timestamp, classification, specific pattern extracted, status, and the agent's confidence score for every message handled.
 
 ## Strategic Roadmap
-As this architecture matures toward a multi-tenant enterprise deployment, the following enhancements are scoped for future iterations:
+
+As this architecture matures toward a multi-queue enterprise deployment, the following enhancements are scoped for future iterations:
 
 **Claim-Check Pattern Integration:** To maintain a lightweight parking lot queue, the message content from the DLQ will be persisted to Azure Blob Storage, with only a reference pointer placed on the parking lot queue.
 

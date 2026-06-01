@@ -53,21 +53,27 @@ class AutonomousDLQClassifier:
 
             compiled_rules = []
             for r in raw_rules:
-                compiled_rules.append({
-                    "rule_id": r["rule_id"],
-                    "severity_score": r["severity_score"],
-                    "classification": r["classification"],
-                    "pattern_name": r["pattern_name"],
-                    "pattern_regex": r.get("pattern_regex"),
-                    "default_action": r.get("default_action", "escalate"),
-                    "engine": rule_engine.Rule(r["condition"]) 
-                })
+                # CRITICAL PATCH: Isolate rule compilation so one bad syntax doesn't wipe out all rules
+                try:
+                    compiled_rules.append({
+                        "rule_id": r["rule_id"],
+                        "severity_score": r["severity_score"],
+                        "classification": r["classification"],
+                        "pattern_name": r["pattern_name"],
+                        "pattern_regex": r.get("pattern_regex"),
+                        "default_action": r.get("default_action", "escalate"),
+                        "safe_defaults_map": r.get("safe_defaults_map"),
+                        "engine": rule_engine.Rule(r["condition"]) 
+                    })
+                except Exception as rule_err:
+                    self.logger.warning(f"Failed to compile rule '{r.get('rule_id', 'unknown')}': {rule_err}")
+                    continue
 
             self.classification_cache.flush()
             self.logger.info(f"Loaded {len(compiled_rules)} deterministic rules for {self.source_queue_name}. Cache flushed.")
             return compiled_rules
         except Exception as e:
-            self.logger.error(f"Failed to initialise rules engine: {e}")
+            self.logger.error(f"Failed to load rules engine configuration: {e}")
             return []
         
     def process_batch(self, dlq_messages):
@@ -76,28 +82,28 @@ class AutonomousDLQClassifier:
             try:
                 self._classify_single_message(message)
             except Exception as e:
-                # exc_info=True captures the full stack trace for operational debugging
                 self.logger.error(f"Critical pipeline failure processing message {message.message_id}: {e}", exc_info=True)
-                # Explicitly abandon message on catastrophic loop failure to clear "Ghost Locks"
-                # FEATURE FLAG: Toggle nested exception safety based on Ops preference
                 if os.getenv("ENABLE_NESTED_BROKER_EXCEPTIONS", "True").lower() == "true":
                     try:
                         self.dlq_receiver.abandon_message(message)
                     except Exception as abandon_err:
                         self.logger.error(f"Failed to safely abandon message {message.message_id}: {abandon_err}")
                 else:
-                    # "crash the app" scenario
                     self.dlq_receiver.abandon_message(message)
 
     def _classify_single_message(self, message):
         headers = message.application_properties or {}
         message_type = self._safe_decode(headers.get(b'message_type') or headers.get('message_type', 'unknown_type'))
         
+        # Separate byte extraction from string decoding to prevent Idempotency collisions
         try:
             self.current_raw_payload_bytes = b"".join(message.body)
-            self.current_raw_payload_str = self.current_raw_payload_bytes.decode('utf-8')
         except Exception:
             self.current_raw_payload_bytes = b""
+            
+        try:
+            self.current_raw_payload_str = self.current_raw_payload_bytes.decode('utf-8', errors='replace')
+        except Exception:
             self.current_raw_payload_str = "unreadable_payload"
 
         client_id = self._safe_decode(headers.get(b'client_id') or headers.get('client_id', 'unknown_client'))
@@ -147,16 +153,16 @@ class AutonomousDLQClassifier:
                 status="Auto_Classified_From_Cache", suggested_action=cached_result.get('action')
             )
             self.db.log_telemetry(contract)
-            self.action_router.route_and_execute(cached_result.get('action', 'escalate'), message, cached_result.get('pattern', ''))
+            self.action_router.route_and_execute(cached_result.get('action', 'escalate'), message, cached_result.get('pattern', ''),cached_result.get('safe_defaults_map'))
             return
 
         # --- GATE D: THE HEURISTIC ROUTER ---
-        classification, pattern, action = self._evaluate_heuristics(client_id,dlq_reason, dlq_desc)
+        classification, pattern, action, safe_defaults_map = self._evaluate_heuristics(client_id,dlq_reason, dlq_desc)
 
         # --- GATE E: AI FALLBACK (AGENTIC DISCOVERY) ---
         if classification == "Unclassified_Anomaly":
             ai_result = self._invoke_ai_with_salvage(client_id, dlq_reason, dlq_desc, self.current_raw_payload_str)
-            confidence = float(ai_result.get('confidence_score', 0.0))
+            confidence = self._safe_float(ai_result.get('confidence_score', 0.0))
             status = "AI_Suggested_Rule_Pending_Approval" if confidence >= 0.80 else "AI_Low_Confidence_Manual_Review"
             
             contract = self._build_contract(
@@ -176,7 +182,7 @@ class AutonomousDLQClassifier:
 
         # --- DETERMINISTIC SUCCESS ---        
         self.classification_cache.save(classification_hash, {
-            "classification": classification, "pattern": pattern, "action": action
+            "classification": classification, "pattern": pattern, "action": action, "safe_defaults_map": safe_defaults_map
         }, ttl_seconds=self.class_ttl)
         
         contract = self._build_contract(
@@ -185,60 +191,40 @@ class AutonomousDLQClassifier:
         )
         
         self.db.log_telemetry(contract)
-        self.action_router.route_and_execute(action, message, pattern)
+        self.action_router.route_and_execute(action, message, pattern, safe_defaults_map)
 
     def _evaluate_heuristics(self, client_id, reason, description):
         context = {"client_id": client_id,"reason": reason, "description": description}
         matches = []
         for rule in self.rules:
-            if rule["engine"].matches(context):
-                pattern = rule["pattern_name"]
-                if rule.get("pattern_regex"):
-                    regex_match = re.search(rule["pattern_regex"], description, re.IGNORECASE)
-                    if regex_match:
-                        pattern = f"missing_field_{regex_match.group(1).lower()}"
-                matches.append((rule["severity_score"], rule["classification"], pattern, rule["default_action"]))
+            # Fail-open on malformed rule logic to prevent pipeline crash
+            try:
+                if rule["engine"].matches(context):
+                    pattern = rule["pattern_name"]
+                    if rule.get("pattern_regex"):
+                        regex_match = re.search(rule["pattern_regex"], description, re.IGNORECASE)
+                        if regex_match:
+                            pattern = f"missing_field_{regex_match.group(1).lower()}"
+                    matches.append((rule["severity_score"], rule["classification"], pattern, rule["default_action"], rule.get("safe_defaults_map")))
+            except Exception as e:
+                self.logger.warning(f"Rule Engine skipped malformed rule '{rule.get('rule_id', 'unknown')}': {e}")
+                continue
 
         if not matches:
-            return "Unclassified_Anomaly", "unknown", None
+            return "Unclassified_Anomaly", "unknown", None, None
             
         matches.sort(key=lambda x: x[0])
         best_match = matches[0]
-        return best_match[1], best_match[2], best_match[3]
+        return best_match[1], best_match[2], best_match[3], best_match[4]
 
     def _invoke_ai_with_salvage(self, client_id, reason, description, payload):
         try:
-            raw_text = self.ai.call_llm(client_id, reason, description, payload)
-            return self._salvage_json(raw_text)
+            # The AI Factory now handles the text salvaging and returns a safe dictionary
+            ai_dict = self.ai.call_llm(client_id, reason, description, payload)
+            return ai_dict
         except Exception as e:
             self.logger.error(f"LLM Invocation Failed: {str(e)}")
             return {"suggested_classification": "AI_UNAVAILABLE", "suggested_action": "escalate", "suggested_pattern": "manual_review_required"}
-
-    def _salvage_json(self, raw_text: str) -> dict:
-        cleaned = raw_text.strip()
-        
-        # Regex safely stubbed to prevent canvas editor issues
-        fence_match = re.search(r"(?:```(?:json)?\s*)(.+?)\s*```", cleaned, re.DOTALL)
-        if fence_match:
-            cleaned = fence_match.group(1).strip()
-            
-        if not cleaned:
-            raise ValueError("Empty LLM response after unwrapping.")
-            
-        try:
-            parsed = json.loads(cleaned)
-            if isinstance(parsed, dict): 
-                return parsed
-        except json.JSONDecodeError:
-            pass
-            
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        
-        if start == -1 or end == -1 or end <= start:
-            raise ValueError("No JSON object found")
-            
-        return json.loads(cleaned[start : end + 1])
 
     def _build_contract(self, client_id, message_type, classification, pattern, status, ai_reasoning=None, suggested_action=None, detection_rule=None, confidence_score=None, occurrence_count=1):
         error_fingerprint = hashlib.sha256(f"{client_id}_{pattern}".encode()).hexdigest()
@@ -256,7 +242,16 @@ class AutonomousDLQClassifier:
             
         return contract
 
+    def _safe_float(self, val):
+        """Safely casts LLM confidence scores to float to prevent ValueError crashes."""
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            self.logger.warning(f"Failed to cast AI confidence score '{val}' to float. Defaulting to 0.0.")
+            return 0.0
+
     def _safe_decode(self, value):
+        """CRITICAL PATCH: Prevents thread crashes on malformed binary headers."""
         if isinstance(value, bytes):
-            return value.decode('utf-8')
+            return value.decode('utf-8', errors='replace')
         return str(value)

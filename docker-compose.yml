@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  # The Autonomous DLQ Triage Pipeline
+  dlq-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: autonomous-dlq-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Commented out to force DefaultAzureCredential to fall back to Azure CLI
+      # - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      # - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      # - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
+      # Force routing to the host machine's native Ollama instance to utilise hardware acceleration
+      - OLLAMA_ENDPOINT=http://host.docker.internal:11434/api/generate
+    volumes:
+      # Bind mounts to persist state and rules across container restarts
+      - ./data:/app/data
+      - ./reports:/app/reports
+    # Cross-platform networking standard to reach local native services from inside the container
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
