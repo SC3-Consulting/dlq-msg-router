@@ -95,7 +95,7 @@ class ServiceBusClientFactory:
     Implements threading.Lock to satisfy Azure Python SDK concurrency rules.
     """
     _client = None
-    _lock = threading.Lock()    
+    _lock = threading.Lock() 
 
     @classmethod
     def get_client(cls, fully_qualified_namespace, credential):

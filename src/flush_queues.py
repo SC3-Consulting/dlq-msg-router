@@ -25,7 +25,7 @@ def flush_queue(client, queue_name, is_dlq=False):
 
 def main():
     fully_qualified_namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE")
-    sources_json = os.getenv("ASB_SOURCES", "[]")
+    sources_json = os.getenv("ASB_SOURCES", "[{\"type\": \"queue\",\"name\": \"viva-payments-queue\"},{\"type\": \"queue\",\"name\": \"viva-integration-queue\"}]")
     parking_lot_name = os.getenv("PARKING_LOT_QUEUE_NAME")
 
     if not fully_qualified_namespace:
@@ -38,9 +38,15 @@ def main():
         logger.error("ASB_SOURCES must be a valid JSON array.")
         return
 
-    credential = DefaultAzureCredential()
+    conn_str = os.getenv("SERVICE_BUS_CONNECTION_STRING")
+    
+    if conn_str:
+        client = ServiceBusClient.from_connection_string(conn_str)
+    else:
+        credential = DefaultAzureCredential()
+        client = ServiceBusClient(fully_qualified_namespace, credential)
 
-    with ServiceBusClient(fully_qualified_namespace, credential) as client:
+    with client:
         # 1. Flush all configured tenant queues (Main + DLQ)
         for source in target_sources:
             if source.get("type") == "queue":

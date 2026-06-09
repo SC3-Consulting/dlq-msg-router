@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 import json
 import logging
 import os
@@ -232,10 +234,18 @@ class AzureFoundryEngine(BaseAIEngine):
         raw_temp = os.getenv("AZURE_FOUNDRY_TEMPERATURE")
         self.temperature = float(raw_temp) if raw_temp else None
 
+        # Read the explicit real-time cost circuit breaker from environment configuration
+        try:
+            self.max_tokens = int(os.getenv("AZURE_FOUNDRY_MAX_TOKENS", "300"))
+        except ValueError:
+            self.max_tokens = 300
+
         # Correct SDK Auth Pattern: Pass TokenCredential directly
+        # Explicitly declare the Cognitive Services audience for local testing
         self.client = ChatCompletionsClient(
             endpoint=self.endpoint, 
-            credential=DefaultAzureCredential()
+            credential=DefaultAzureCredential(),
+            credential_scopes=["https://cognitiveservices.azure.com/.default"]
         )
 
     def call_llm(self, client_id: str, reason: str, description: str, payload: str) -> Dict[str, Any]:
@@ -255,6 +265,7 @@ class AzureFoundryEngine(BaseAIEngine):
                     UserMessage(content=prompt)
                 ],
                 model=self.deployment_name,
+                max_tokens=self.max_tokens,  # Explicit real-time cost circuit breaker passed safely
                 **kwargs
             )
             raw_text = response.choices[0].message.content
