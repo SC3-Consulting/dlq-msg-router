@@ -40,7 +40,7 @@ To forcefully spin down compute resources and halt billing overnight (as per arc
 **Halt Compute (Scale to Zero):**
 ```bash
 az containerapp update \
-  --name "viva-dlq-agent-app" \
+  --name "ca-viva-dlq-agent-app" \
   --resource-group "rg-viva-dlq-dev" \
   --min-replicas 0 \
   --max-replicas 1
@@ -49,7 +49,7 @@ az containerapp update \
 **Resume Compute:**
 ```bash
 az containerapp update \
-  --name "viva-dlq-agent-app" \
+  --name "ca-viva-dlq-agent-app" \
   --resource-group "rg-viva-dlq-dev" \
   --min-replicas 1 \
   --max-replicas 1
