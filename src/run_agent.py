@@ -73,6 +73,8 @@ class DemoTerminalDatabase:
                 contract.get("suggested_action", "N/A"),
                 contract.get("confidence_score", "N/A")
             ]
+            #Broadcast the row to Log Analytics
+            print(f"CSV_EXPORT|{','.join(map(str, row))}")
             
             with open(self.filepath, mode='a', newline='') as f:
                 writer = csv.writer(f)
