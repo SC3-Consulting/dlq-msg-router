@@ -16,3 +16,8 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "agent_client_id" {
+  description = "The Client ID of the User Assigned Managed Identity"
+  type        = string
+}

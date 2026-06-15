@@ -103,6 +103,12 @@ module "bastion_jumpbox" {
   agent_runtime_identity_id    = module.identity.agent_runtime_identity_id
 }
 
+data "azurerm_user_assigned_identity" "agent" {
+  name                = "id-agent-runtime-${var.environment}"
+  resource_group_name = module.foundation.resource_group_name
+  depends_on          = [module.identity]
+}
+
 module "agent_hosting" {
   source                     = "./modules/agent_hosting"
   resource_group_name        = module.foundation.resource_group_name
@@ -113,6 +119,7 @@ module "agent_hosting" {
   acr_login_server           = module.data_services.acr_login_server
   agent_runtime_identity_id  = module.identity.agent_runtime_identity_id
   app_env_vars               = var.app_env_vars
+  agent_client_id            = data.azurerm_user_assigned_identity.agent.client_id
 }
 
 variable "jumpbox_ssh_public_key_secret_name" {

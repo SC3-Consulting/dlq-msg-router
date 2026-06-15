@@ -47,6 +47,11 @@ resource "azurerm_container_app" "dlq_agent" {
           value = env.value
         }
       }
+      # Forces the Python SDK to use the User-Assigned Managed Identity
+      env {
+        name  = "AZURE_CLIENT_ID"
+        value = var.agent_client_id
+      }
     }
   }
 
