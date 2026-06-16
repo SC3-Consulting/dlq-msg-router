@@ -1,6 +1,6 @@
 # Autonomous DLQ Triage Pipeline
 
-This repository provisions and operates a self-healing, non-deterministic error resolution engine for Azure Service Bus Dead Letter Queues (DLQ).
+This repository provisions and operates a hybrid deterministic and AI-augmented error resolution engine for Azure Service Bus Dead Letter Queues (DLQ).
 
 ## Scope
 
@@ -31,6 +31,16 @@ To resolve this, the architecture utilises a **User-Assigned Managed Identity**.
 Azure Container Apps utilise ephemeral storage. Extracting a physical CSV file (e.g., `reports/telemetry_dashboard.csv`) via the Azure CLI requires elevated container execution privileges (`Microsoft.App/containerApps/getAuthToken/action`). Granting these privileges to standard operational identities violates least-privilege principles.
 
 The chosen solution enforces a **Report-to-Log pattern**. The orchestrator (`src/run_agent.py`) intercepts the generation of CSV rows and prints them to standard output with a strict `CSV_EXPORT|` prefix. This data is ingested securely by the integrated Azure Log Analytics workspace, where it can be natively queried and exported without requiring direct container interaction.
+
+### 3. AMQP Connection Multiplexing & Thread Safety
+The Azure Python SDK for Service Bus can experience severe socket exhaustion and `amqp:connection:forced` crashes if multiple threads attempt to instantiate separate underlying AMQP 1.0 connections simultaneously. 
+
+To solve this, the architecture employs a Thread-Safe Singleton pattern (`ServiceBusClientFactory`). The orchestrator establishes a single, resilient TCP connection to the Azure Service Bus and uses strict `threading.Lock()` controls to safely multiplex concurrent DLQ receivers and senders across the thread pool. This drastically reduces the network footprint and prevents SNAT port exhaustion on the container.
+
+### 4. Autonomous Cache Maintenance
+The pipeline's Idempotency Store (Gate B) relies on a local database to track UUIDs and block duplicate processing. Over time, in a high-throughput environment, this storage would natively expand until it caused an Out-Of-Memory (OOM) or Disk Full crash on the ephemeral container instance.
+
+To guarantee zero-touch, long-term stability, the orchestrator spawns a decoupled `disk_cleanup_daemon` on a background thread. This daemon wakes hourly to sweep the local cache, safely purging expired DBM keys and ensuring the container's memory footprint remains permanently bounded.
 
 ## The 5-Gate Triage Architecture
 
@@ -82,7 +92,7 @@ graph TD
     C -->|Peek-Lock Pull| D
     D -->|Gate A: Poison Pill & PII| F
     D -->|Gate B: Correlation Hash| E
-    E -->|If Duplicate| H[Drop Message]
+    E -->|If Duplicate| H[Drop Message & Alert]
     E -->|If Unique| F
     
     F -->|Pattern Match| I[Execute Action]
@@ -91,7 +101,8 @@ graph TD
     
     I -->|fix_and_retry| J[Apply Schema Fix & Route to Main]
     I -->|retry| K[Route to Main]
-    I -->|escalate / drop_and_notify| L[Route to Parking Lot Queue]
+    I -->|escalate| L[Route to Parking Lot Queue]
+    I -->|drop_and_notify / drop| H
     
     D -.->|Stream CSV_EXPORT| M[Azure Log Analytics]
 
@@ -125,7 +136,8 @@ Maintaining a hardcoded JSON array for hundreds of queues is an operational anti
 
 * **Dynamic Discovery:** Utilises the `ServiceBusAdministrationClient` to programmatically query the namespace on boot, automatically discovering all eligible queues.
 * **Exclusion Filters:** Utilises the `EXCLUDED_QUEUES` environment variable to blacklist specific topics or queues from the dynamic discovery process, isolating operational traffic.
-* **Bounded Concurrency (Polling):** The agent does not assign a thread to every discovered DLQ simultaneously, which would cause resource exhaustion. Instead, it works through the discovered list using a fixed ThreadPool up to the `MAX_CONCURRENT_QUEUES` limit. Once the batch is processed, it initiates the next polling cycle. DLQs are not latency-sensitive, so this sequential polling ensures stability.
+* **Bounded Concurrency (Polling):** The agent does not assign a thread to every discovered DLQ simultaneously. Instead, it works through the discovered list using a fixed `ThreadPoolExecutor` up to the `MAX_CONCURRENT_QUEUES` limit. 
+* **```CRITICAL PATCH``` - Thread Pool Elevation:** The `ThreadPoolExecutor` is elevated *outside* the infinite polling loop. This prevents aggressive OS thread-churn (creating and destroying threads every 60 seconds). Once the active batch is processed across the persistent worker threads, the main thread yields the CPU via `AGENT_CYCLE_SLEEP_SECONDS` before polling again.
 
 ## Repository Layout
 
@@ -136,41 +148,39 @@ VIVA-DLQ-AGENT/
 │   └── rules.json                          # Deterministic heuristic definitions
 ├── docs/
 │   ├── DEPLOYMENT_RUNBOOK.md               # Infrastructure IaC deployment guide
-│   └── ops_guide.md                        # Day 2 operations and maintenance 
-│                        # Architectural overview
+│   └── ops_guide.md                        # operations and maintenance 
 ├── infra/
 │   ├── scripts/                            # Bash and PowerShell rollout automation
-│   └── terraform/
-│       └── azure/
-│           ├── .terraform/
+│   └── terraform/                          
+│       └── azure/                          # Azure-specific Terraform root
+│           ├── .terraform/                 # Local Terraform provider binaries and cache
 │           ├── bootstrap/                  # Remote state Storage Account & Key Vault
 │           ├── environments/               # Target state tfvars
 │           ├── modules/                    # Isolated IaC definitions
-│           │   ├── agent_hosting/
-│           │   ├── bastion_jumpbox/
-│           │   ├── data_services/
-│           │   ├── dns/
-│           │   ├── foundation/
-│           │   ├── foundry/
-│           │   ├── identity/
-│           │   ├── network/
-│           │   ├── observability/
-│           │   └── private_endpoints/
+│           │   ├── agent_hosting/          # Azure Container Apps and environment variables
+│           │   ├── bastion_jumpbox/        # Secure SSH entry point via Azure Bastion
+│           │   ├── data_services/          # Service Bus namespaces and Container Registry
+│           │   ├── dns/                    # Private DNS Zones for VNet resolution
+│           │   ├── foundation/             # Base Resource Group deployments
+│           │   ├── foundry/                # Azure AI Foundry / Cognitive Services accounts
+│           │   ├── identity/               # User-Assigned Managed Identities and RBAC mapping
+│           │   ├── network/                # Virtual Networks, Subnets, and NSGs
+│           │   ├── observability/          # Log Analytics Workspaces integration
+│           │   └── private_endpoints/      # VNet peering for secure internal routing
 │           ├── platform/
-│           ├── main.tf
-│           ├── variables.tf
-│           ├── versions.tf
+│           ├── main.tf                     # Root orchestrator connecting all modules
+│           ├── variables.tf                # Global input variable definitions
+│           ├── versions.tf                 # Terraform provider version constraints
 │           └── .terraform.lock.hcl
 ├── reports/
 │   └── telemetry_dashboard.csv             # Output generated during local execution
-├── scripts/
 ├── simulator/
 │   ├── consumer.py                         # Generates downstream rejections
 │   └── producer.py                         # Injects synthetic anomalies
 ├── src/
 │   ├── action_executor.py                  # Command pattern implementations
 │   ├── ai_client.py                        # Foundry/Ollama LLM factory
-│   ├── autonomous_dlq_classifier.py        # Core 5-gate pipeline logic
+│   ├── autonomous_dlq_classifier.py        # Core  5-gate pipeline logic
 │   ├── flush_queues.py                     # Administrative ASB sanitisation
 │   ├── run_agent.py                        # Orchestrator and thread pool polling
 │   └── state_managers.py                   # Caching logic
@@ -178,7 +188,7 @@ VIVA-DLQ-AGENT/
 ├── .env.example
 ├── docker-compose.yml                      # Local environment orchestration
 ├── Dockerfile                              # Multi-stage production container
-├── pytest.ini
+├── pytest.ini                              # Pytest configuration and strict markers
 ├── README.md
 ├── requirements-dev.txt                    # CI/CD and linting dependencies
 └── requirements.txt                        # Production Python dependencies
