@@ -32,9 +32,9 @@ ssh-keygen -m PEM -t rsa -b 4096 -f ~/.ssh/viva_jumpbox_rsa -N ""
 
 3. **Trap Resolution (Soft-Deleted Vaults):** Azure retains Key Vaults in a soft-deleted state, blocking recreation. If a previous deployment was torn down, purge the old vault manually before proceeding. Replace the name with your specific vault target:
 
-[PUT TRIPLE BACK TICKS HERE]bash
+```bash
 az keyvault purge --name kvtfstatelogia7 --location australiaeast
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 ---
 
@@ -44,24 +44,24 @@ az keyvault purge --name kvtfstatelogia7 --location australiaeast
 
 1. Execute the Phase 1 PowerShell orchestrator from your local repository root:
 
-[PUT TRIPLE BACK TICKS HERE]powershell
+```powershell
 pwsh ./infra/scripts/01-bootstrap.ps1
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 2. **Secure Key Injection:** Once the Key Vault is provisioned, manually read the generated public key and inject it into the vault as a secret. Execute these commands in your local PowerShell terminal:
 
-[PUT TRIPLE BACK TICKS HERE]powershell
+```powershell
 $PubKey = Get-Content ~/.ssh/viva_jumpbox_rsa.pub -Raw
 az keyvault secret set --vault-name kvtfstatelogia7 --name jumpbox-admin-ssh-public-key-dev --value "$PubKey"
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 3. Initialise the Terraform backend memory to link the local workspace to the newly created Storage Account:
 
-[PUT TRIPLE BACK TICKS HERE]bash
+```bash
 cd infra/terraform/azure
 terraform init -reconfigure -backend-config=environments/dev/backend.hcl
 cd ../../..
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 ---
 
@@ -71,17 +71,17 @@ cd ../../..
 
 1. Execute the Phase 2 orchestrator:
 
-[PUT TRIPLE BACK TICKS HERE]powershell
+```powershell
 pwsh ./infra/scripts/02-deploy-network-and-data.ps1
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 2. Commit the structural changes to version control to ensure the remote repository is prepared for the jumpbox pull:
 
-[PUT TRIPLE BACK TICKS HERE]bash
+```bash
 git add .
 git commit -m "Phase 2: IaC modules, runbooks, and strict repo cleanup"
 git push
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 ---
 
@@ -100,7 +100,7 @@ git push
 ### 2. Provision the Bare-Metal Environment
 The Jumpbox is a naked Ubuntu instance. Paste the following block directly into the Bastion terminal to install dependencies, clone the code, and bypass PEP 668 restrictions. Replace 'YOUR_GITHUB_USERNAME' with the actual username.
 
-[PUT TRIPLE BACK TICKS HERE]bash
+```bash
 curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 sudo apt-get update
 sudo apt-get install -y docker.io python3-pip python3-venv
@@ -110,17 +110,17 @@ cd viva-dlq-agent
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 ### 3. The Split-Brain Environment Patch
 **Trap Resolution:** The cloud agent dynamically discovers queues, whilst the Jumpbox simulators default to reading local JSON files. If a queue name has a typo in the local JSON, the simulators will crash with an 'amqp:not-found' error. 
 
 To synchronise the Jumpbox with the production logic, the simulators must be forced to hit the Service Bus API. Paste this exact configuration into the Jumpbox terminal to create the '.env' file:
 
-[PUT TRIPLE BACK TICKS HERE]bash
+```bash
 cat << 'EOF' > .env
 # Azure Service Bus Configuration
-SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE="sb-viva-dlq-swastik-99.servicebus.windows.net"
+SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE="sb-viva-dlq-.servicebus.windows.net"
 
 # Toggle for RBAC-secured dynamic discovery of queues
 ENABLE_DYNAMIC_DISCOVERY="True"
@@ -165,7 +165,7 @@ RULES_FILE_PATH="data/rules.json"
 
 # Azure Foundry Specifics (Required if AI_PROVIDER="AZURE_FOUNDRY")
 AI_PROVIDER="AZURE_FOUNDRY"
-AZURE_FOUNDRY_ENDPOINT="https://foundry-viva-swastik-99.cognitiveservices.azure.com/openai/deployments/gpt-4o-mini"
+AZURE_FOUNDRY_ENDPOINT="https://foundry-viva-.cognitiveservices.azure.com/openai/deployments/gpt-4o-mini"
 AZURE_FOUNDRY_DEPLOYMENT_NAME="gpt-4o-mini"
 AZURE_FOUNDRY_TEMPERATURE=0.1
 # Time to sleep (in seconds) after completing a full sweep of all queues
@@ -174,14 +174,14 @@ AGENT_CYCLE_SLEEP_SECONDS=61
 # Dynamic Cost Controls (Your Real-Time Airbags)
 AZURE_FOUNDRY_MAX_TOKENS=300
 EOF
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 ### 4. Build and Push the Image
 Execute the bash script to compile and push the container to the ACR using the Jumpbox's Managed Identity:
 
-[PUT TRIPLE BACK TICKS HERE]bash
+```bash
 bash ./infra/scripts/03-push-image.bash
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 ---
 
@@ -196,16 +196,16 @@ When mapping User-Assigned Managed Identities into Container Apps, the Python 'D
 Terraform will ignore the newly pushed image because the ACR tag remains statically set to 'v1.0.0'. To force Azure to pull the new code and generate a new deployment revision, modify a benign environment variable in the local `.env` file used by Terraform.
 
 Change the sleep timer value from `60` to `61`:
-[PUT TRIPLE BACK TICKS HERE]bash
+```bash
 AGENT_CYCLE_SLEEP_SECONDS=61
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 ### 3. Execute Deployment
 Return to the **local laptop terminal** and deploy the agent. Terraform will detect the altered `AGENT_CYCLE_SLEEP_SECONDS` variable and force a fresh container deployment.
 
-[PUT TRIPLE BACK TICKS HERE]powershell
+```powershell
 pwsh ./infra/scripts/04-deploy-agent.ps1
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 ---
 
@@ -218,28 +218,28 @@ pwsh ./infra/scripts/04-deploy-agent.ps1
 1. Open **two separate Bastion terminals** connected to the Jumpbox.
 2. In BOTH terminals, activate the virtual environment:
 
-[PUT TRIPLE BACK TICKS HERE]bash
+```bash
 cd ~/viva-dlq-agent
 source .venv/bin/activate
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 3. **Terminal 1 (Sanitise the Environment):** Flush all ghost messages from the Service Bus:
 
-[PUT TRIPLE BACK TICKS HERE]bash
+```bash
 python src/flush_queues.py
-[PUT TRIPLE BACK TICKS HERE]
+````
 
 4. **Terminal 1 (The Consumer):** Start the downstream application simulator:
 
-[PUT TRIPLE BACK TICKS HERE]bash
+```bash
 python -m simulator.consumer
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 5. **Terminal 2 (The Payload Cannon):** Dispatch the synthetic anomalies:
 
-[PUT TRIPLE BACK TICKS HERE]bash
+```bash
 python -m simulator.producer
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 ---
 
@@ -250,7 +250,7 @@ python -m simulator.producer
 ### 1. Telemetry Extraction
 Navigate to the Log Analytics Workspace ('law-dev') in the Azure Portal. Run the following KQL query to extract the telemetry rows broadcasted by the agent, and select 'Export to CSV':
 
-[PUT TRIPLE BACK TICKS HERE]kusto
+```kusto
 ContainerAppConsoleLogs_CL
 | where ContainerAppName_s == "ca-viva-dlq-agent-dev"
 | where Log_s startswith "CSV_EXPORT|"
@@ -268,14 +268,14 @@ ContainerAppConsoleLogs_CL
     suggested_action = columns[8],
     confidence_score = columns[9]
 | sort by todatetime(timestamp) desc
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 ### 2. Infrastructure Teardown
 From the **local laptop terminal**, execute the teardown script to destroy all compute and networking resources. This script deliberately preserves the Storage Account and Key Vault so the remote memory remains intact.
 
-[PUT TRIPLE BACK TICKS HERE]powershell
+```powershell
 pwsh ./infra/scripts/99-destroy-all.ps1
-[PUT TRIPLE BACK TICKS HERE]
+```
 
 **Trap Resolution (The Bastion NSG Catch-22):** The teardown script will successfully delete the Virtual Network, but it will throw a '400 Bad Request' regarding 'nsg-azure-bastion'. This is a known Azure API race condition where Terraform attempts to delete mandatory security rules whilst Azure believes the Bastion subnet is still active.
 
@@ -284,6 +284,6 @@ To resolve this:
 2. Locate the orphaned Network Security Group ('nsg-azure-bastion') and click 'Delete' manually.
 3. Run the destroy script one final time to purge the NSG from the local Terraform state cleanly:
 
-[PUT TRIPLE BACK TICKS HERE]powershell
+```powershell
 pwsh ./infra/scripts/99-destroy-all.ps1
-[PUT TRIPLE BACK TICKS HERE]
+```
