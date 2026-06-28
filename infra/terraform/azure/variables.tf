@@ -68,9 +68,45 @@ variable "bootstrap_key_vault_resource_group_name" {
 
 variable "app_env_vars" {
   type        = map(string)
-  description = "Dynamic environment variables loaded from .env"
+  description = "Non-secret app environment variables provided via environment tfvars"
   default     = {}
 }
+
+variable "app_secret_env_var_secret_names" {
+  type        = map(string)
+  description = "Map of environment variable name to Key Vault secret name"
+  default     = {}
+}
+
+variable "container_image_tag" {
+  type        = string
+  description = "Immutable image tag for the router-agent container deployment."
+}
+
+variable "agent_container_cpu" {
+  type        = number
+  description = "CPU cores for the router agent container app instance."
+  default     = 0.5
+}
+
+variable "agent_container_memory" {
+  type        = string
+  description = "Memory size for the router agent container app instance."
+  default     = "1Gi"
+}
+
+variable "agent_min_replicas" {
+  type        = number
+  description = "Minimum number of container app replicas for the router agent."
+  default     = 1
+}
+
+variable "agent_max_replicas" {
+  type        = number
+  description = "Maximum number of container app replicas for the router agent."
+  default     = 1
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

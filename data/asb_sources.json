@@ -1,10 +1,10 @@
 [
   {
     "type": "queue",
-    "name": "viva-integration-queue"
+    "name": "integration-queue"
   },
   {
     "type": "queue",
-    "name": "viva-payments-queue"
+    "name": "payments-queue"
   }
 ]

@@ -1,5 +1,5 @@
 resource "azurerm_container_registry" "this" {
-  name                          = "acrvivadlqswastik99"
+  name                          = "acrmsgrouter99"
   resource_group_name           = var.resource_group_name
   location                      = var.location
   sku                           = "Premium"
@@ -8,7 +8,7 @@ resource "azurerm_container_registry" "this" {
 }
 
 resource "azurerm_servicebus_namespace" "this" {
-  name                          = "sb-viva-dlq-swastik-99"
+  name                          = "sb-dlq-msg-router-99"
   location                      = var.location
   resource_group_name           = var.resource_group_name
   sku                           = "Premium"
@@ -26,14 +26,14 @@ resource "azurerm_servicebus_queue" "parking_lot" {
 }
 
 resource "azurerm_servicebus_queue" "integration" {
-  name         = "viva-integration-queue"
+  name         = "integration-queue"
   namespace_id = azurerm_servicebus_namespace.this.id
   dead_lettering_on_message_expiration = true
   max_delivery_count                   = 10
 }
 
 resource "azurerm_servicebus_queue" "payment" {
-  name         = "viva-payment-queue"
+  name         = "payments-queue"
   namespace_id = azurerm_servicebus_namespace.this.id
   dead_lettering_on_message_expiration = true
   max_delivery_count                   = 10

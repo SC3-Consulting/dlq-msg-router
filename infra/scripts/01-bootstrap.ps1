@@ -82,7 +82,7 @@ foreach ($Provider in $Providers) {
 }
 
 # Async wait for provider registration (Azure Management Plane delay)
-Write-Host "==> Waiting for provider registrations to finalize (this may take a few minutes)..." -ForegroundColor Cyan
+Write-Host "==> Waiting for provider registrations to finalise (this may take a few minutes)..." -ForegroundColor Cyan
 foreach ($Provider in $Providers) {
     $Status = "Registering"
     while ($Status -ne "Registered") {
@@ -96,7 +96,7 @@ foreach ($Provider in $Providers) {
 }
 
 # Define Terraform Variables
-$ResourceGroupName = "rg-viva-dlq-dev"
+$ResourceGroupName = "rg-dlq-msg-router-$Environment"
 $StorageAccountPrefix = "sttfstate$Environment"
 $KeyVaultPrefix = "kvtfstate"
 $BackendKey = "platform/${Environment}.tfstate"

@@ -1,16 +1,26 @@
 #!/bin/bash
 
+##########################
+# setup.sh
+# Sets up the Python virtual environment and installs dependencies for the DLQ Smart Triage Router project  
+# Usage:
+#   ./scripts/setup.sh
+# Optional environment variables:
+#   INSTALL_DIR  Install destination (default: /usr/local/bin)      
+#
+##########################
+
 # Exit immediately if a command exits with a non-zero status
 set -e
 
-# ANSI color codes for clean, professional terminal output
+# ANSI colour codes for clean, professional terminal output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 RED='\033[0;31m'
-NC='\033[0m' # No Color
+NC='\033[0m' # No Colour
 
 echo -e "${BLUE}======================================================"
-echo -e " Viva DLQ Smart Triage Router - Infrastructure Setup"
+echo -e " DLQ Smart Triage Router - Infrastructure Setup"
 echo -e "======================================================${NC}"
 
 # 1. Dependency Check: Verify Python 3

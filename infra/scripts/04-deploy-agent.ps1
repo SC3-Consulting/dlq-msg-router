@@ -1,3 +1,13 @@
+<#
+.SYNOPSIS
+    Deploys the agent for the specified environment.
+.DESCRIPTION
+    This script applies the Terraform module responsible for provisioning the agent hosting resources.
+.PARAMETER Environment
+    The target deployment environment (e.g., dev, test, prod). Defaults to 'dev'.
+.EXAMPLE
+    .\04-deploy-agent.ps1 -Environment dev
+#>
 param ([string]$Environment = "dev")
 $ErrorActionPreference = "Stop"
 
@@ -5,20 +15,17 @@ $ErrorActionPreference = "Stop"
 $RootDir = Resolve-Path "$PSScriptRoot/../.."
 $TfDir = Join-Path $RootDir "infra/terraform/azure"
 $BootstrapVarsFile = Join-Path $TfDir "environments/$Environment/bootstrap.generated.tfvars"
-$EnvFile = Join-Path $RootDir ".env"
+$PlatformVarsFile = Join-Path $TfDir "environments/$Environment/platform.tfvars"
 
-Write-Host "==> Phase 3: Parsing .env file..." -ForegroundColor Cyan
-$EnvVars = @{}
-foreach($line in Get-Content $EnvFile) {
-    if ($line -match "^([^#=]+)=(.*)$") {
-        $key = $matches[1].Trim()
-        # Trim whitespace and remove surrounding double quotes
-        $val = $matches[2].Trim().Trim('"')
-        $EnvVars[$key] = $val
-    }
+if (-not (Test-Path $PlatformVarsFile)) {
+  throw "Missing platform vars file: $PlatformVarsFile"
 }
-$EnvJson = $EnvVars | ConvertTo-Json -Compress
-$env:TF_VAR_app_env_vars = $EnvJson
+
+if (-not (Test-Path $BootstrapVarsFile)) {
+  throw "Missing bootstrap vars file: $BootstrapVarsFile. Run 01-bootstrap.ps1 first."
+}
+
+Write-Host "==> Phase 3: Deploying agent from environment tfvars and Key Vault references..." -ForegroundColor Cyan
 
 Write-Host "==> Deploying Agent Hosting Module..." -ForegroundColor Cyan
 Set-Location $TfDir
@@ -28,16 +35,8 @@ $ApplyArgs = @(
   "apply",
   "-auto-approve",
   "-target=module.agent_hosting",
+  "-var-file=$PlatformVarsFile",
   "-var-file=$BootstrapVarsFile",
-  "-var=environment=$Environment",
-  "-var=location=australiaeast",
-  "-var=resource_group_name=rg-viva-dlq-dev",
-  "-var=vnet_cidr=10.20.0.0/16",
-  "-var=private_endpoint_subnet_cidr=10.20.1.0/24",
-  "-var=agent_subnet_cidr=10.20.2.0/24",
-  "-var=container_apps_subnet_cidr=10.20.5.0/24",
-  "-var=jumpbox_subnet_cidr=10.20.3.0/24",
-  "-var=azure_bastion_subnet_cidr=10.20.4.0/24",
-  "-var=jumpbox_vm_size=Standard_B2s"
+  "-var=environment=$Environment"
 )
 & terraform $ApplyArgs
