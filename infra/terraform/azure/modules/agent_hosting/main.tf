@@ -15,7 +15,7 @@ resource "azurerm_container_app_environment" "this" {
 }
 
 resource "azurerm_container_app" "dlq_agent" {
-  name                         = "ca-viva-dlq-agent-${var.suffix}"
+  name                         = "ca-dlq-msg-router-${var.suffix}"
   resource_group_name          = var.resource_group_name
   container_app_environment_id = azurerm_container_app_environment.this.id
   revision_mode                = "Single"
@@ -30,15 +30,24 @@ resource "azurerm_container_app" "dlq_agent" {
     identity = var.agent_runtime_identity_id
   }
 
+  dynamic "secret" {
+    for_each = var.app_secret_env_var_secret_ids
+    content {
+      name                = lower(replace(secret.key, "_", "-"))
+      key_vault_secret_id = secret.value
+      identity            = var.agent_runtime_identity_id
+    }
+  }
+
   template {
-    min_replicas = 1
-    max_replicas = 1
+    min_replicas = var.min_replicas
+    max_replicas = var.max_replicas
 
     container {
-      name   = "viva-dlq-agent"
-      image  = "${var.acr_login_server}/viva-dlq-agent:v1.0.0"
-      cpu    = 0.5
-      memory = "1Gi"
+      name   = "router-agent"
+      image  = "${var.acr_login_server}/router-agent:${var.container_image_tag}"
+      cpu    = var.container_cpu
+      memory = var.container_memory
 
       dynamic "env" {
         for_each = var.app_env_vars
@@ -47,6 +56,15 @@ resource "azurerm_container_app" "dlq_agent" {
           value = env.value
         }
       }
+
+      dynamic "env" {
+        for_each = var.app_secret_env_var_secret_ids
+        content {
+          name        = env.key
+          secret_name = lower(replace(env.key, "_", "-"))
+        }
+      }
+
       # Forces the Python SDK to use the User-Assigned Managed Identity
       env {
         name  = "AZURE_CLIENT_ID"

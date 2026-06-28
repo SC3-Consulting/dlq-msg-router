@@ -1,0 +1,90 @@
+{
+  "generated_at_epoch": 1782486852,
+  "environment": {
+    "python": "unknown",
+    "ai_ratio": 0.2
+  },
+  "scenarios": [
+    {
+      "message_count": 100,
+      "ai_message_count": 20,
+      "total_seconds": 0.282401,
+      "throughput_msg_per_sec": 354.11,
+      "latency_ms": {
+        "p50": 2.646,
+        "p95": 3.159,
+        "p99": 5.6,
+        "max": 11.549
+      },
+      "ai_cost": {
+        "assumptions": {
+          "input_tokens_per_message": 900,
+          "output_tokens_per_message": 120,
+          "price_input_per_1k_usd": 0.005,
+          "price_output_per_1k_usd": 0.015
+        },
+        "estimated": {
+          "total_input_tokens": 18000,
+          "total_output_tokens": 2400,
+          "input_cost_usd": 0.09,
+          "output_cost_usd": 0.036,
+          "total_cost_usd": 0.126
+        }
+      }
+    },
+    {
+      "message_count": 500,
+      "ai_message_count": 100,
+      "total_seconds": 1.284549,
+      "throughput_msg_per_sec": 389.24,
+      "latency_ms": {
+        "p50": 2.438,
+        "p95": 2.827,
+        "p99": 5.214,
+        "max": 9.296
+      },
+      "ai_cost": {
+        "assumptions": {
+          "input_tokens_per_message": 900,
+          "output_tokens_per_message": 120,
+          "price_input_per_1k_usd": 0.005,
+          "price_output_per_1k_usd": 0.015
+        },
+        "estimated": {
+          "total_input_tokens": 90000,
+          "total_output_tokens": 12000,
+          "input_cost_usd": 0.45,
+          "output_cost_usd": 0.18,
+          "total_cost_usd": 0.63
+        }
+      }
+    },
+    {
+      "message_count": 1000,
+      "ai_message_count": 200,
+      "total_seconds": 2.627558,
+      "throughput_msg_per_sec": 380.58,
+      "latency_ms": {
+        "p50": 2.504,
+        "p95": 3.007,
+        "p99": 5.24,
+        "max": 9.298
+      },
+      "ai_cost": {
+        "assumptions": {
+          "input_tokens_per_message": 900,
+          "output_tokens_per_message": 120,
+          "price_input_per_1k_usd": 0.005,
+          "price_output_per_1k_usd": 0.015
+        },
+        "estimated": {
+          "total_input_tokens": 180000,
+          "total_output_tokens": 24000,
+          "input_cost_usd": 0.9,
+          "output_cost_usd": 0.36,
+          "total_cost_usd": 1.26
+        }
+      }
+    }
+  ]
+}

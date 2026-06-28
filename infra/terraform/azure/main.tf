@@ -109,17 +109,37 @@ data "azurerm_user_assigned_identity" "agent" {
   depends_on          = [module.identity]
 }
 
+data "azurerm_key_vault_secret" "app_env_secret" {
+  for_each     = local.use_key_vault_jumpbox_key ? var.app_secret_env_var_secret_names : {}
+  name         = each.value
+  key_vault_id = data.azurerm_key_vault.bootstrap[0].id
+}
+
+locals {
+  app_secret_env_var_secret_ids = {
+    for env_name, secret_name in var.app_secret_env_var_secret_names :
+    env_name => data.azurerm_key_vault_secret.app_env_secret[env_name].id
+    if local.use_key_vault_jumpbox_key
+  }
+}
+
 module "agent_hosting" {
-  source                     = "./modules/agent_hosting"
-  resource_group_name        = module.foundation.resource_group_name
-  location                   = var.location
-  suffix                     = var.environment
-  delegated_agent_subnet_id  = module.network.container_apps_subnet_id
-  log_analytics_workspace_id = module.observability.log_analytics_workspace_id
-  acr_login_server           = module.data_services.acr_login_server
-  agent_runtime_identity_id  = module.identity.agent_runtime_identity_id
-  app_env_vars               = var.app_env_vars
-  agent_client_id            = data.azurerm_user_assigned_identity.agent.client_id
+  source                        = "./modules/agent_hosting"
+  resource_group_name           = module.foundation.resource_group_name
+  location                      = var.location
+  suffix                        = var.environment
+  delegated_agent_subnet_id     = module.network.container_apps_subnet_id
+  log_analytics_workspace_id    = module.observability.log_analytics_workspace_id
+  acr_login_server              = module.data_services.acr_login_server
+  agent_runtime_identity_id     = module.identity.agent_runtime_identity_id
+  app_env_vars                  = var.app_env_vars
+  app_secret_env_var_secret_ids = local.app_secret_env_var_secret_ids
+  container_image_tag           = var.container_image_tag
+  container_cpu                 = var.agent_container_cpu
+  container_memory              = var.agent_container_memory
+  min_replicas                  = var.agent_min_replicas
+  max_replicas                  = var.agent_max_replicas
+  agent_client_id               = data.azurerm_user_assigned_identity.agent.client_id
 }
 
 variable "jumpbox_ssh_public_key_secret_name" {

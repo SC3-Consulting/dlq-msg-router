@@ -1,3 +1,14 @@
+<#
+.SYNOPSIS
+    Runs a Terraform plan (dry run) for the specified environment.
+.DESCRIPTION
+    This script applies the Terraform plan command to preview changes for the specified environment.
+.PARAMETER Environment
+    The target deployment environment (e.g., dev, test, prod). Defaults to 'dev'.
+.EXAMPLE
+    .\test-plan.ps1 -Environment dev 
+#>
+
 param ([string]$Environment = "dev")
 $ErrorActionPreference = "Stop"
 
@@ -6,6 +17,7 @@ $RootDir = Resolve-Path "$PSScriptRoot/../.."
 $TfDir = Join-Path $RootDir "infra/terraform/azure"
 $BackendFile = Join-Path $TfDir "environments/$Environment/backend.hcl"
 $BootstrapVarsFile = Join-Path $TfDir "environments/$Environment/bootstrap.generated.tfvars"
+$PlatformVarsFile = Join-Path $TfDir "environments/$Environment/platform.tfvars"
 
 Write-Host "==> Running Terraform Plan (Dry Run)..." -ForegroundColor Cyan
 Set-Location $TfDir
@@ -29,16 +41,8 @@ $TfArgs = @(
   "-target=module.private_endpoints",
   "-target=module.identity",
   "-target=module.bastion_jumpbox",
+  "-var-file=$PlatformVarsFile",
   "-var-file=$BootstrapVarsFile",
-  "-var=environment=$Environment",
-  "-var=location=australiaeast",
-  "-var=resource_group_name=rg-viva-dlq-dev",
-  "-var=vnet_cidr=10.20.0.0/16",
-  "-var=private_endpoint_subnet_cidr=10.20.1.0/24",
-  "-var=agent_subnet_cidr=10.20.2.0/24",
-  "-var=container_apps_subnet_cidr=10.20.5.0/24",
-  "-var=jumpbox_subnet_cidr=10.20.3.0/24",
-  "-var=azure_bastion_subnet_cidr=10.20.4.0/24",
-  "-var=jumpbox_vm_size=Standard_B2s"
+  "-var=environment=$Environment"
 )
 & terraform $TfArgs

@@ -30,6 +30,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY src/ ./src/
 COPY data/ ./data/
 
+EXPOSE 8080
+
 # Create persistent directories and enforce least-privilege non-root execution
 RUN useradd -m -u 1000 appuser && \
     mkdir -p /app/reports /app/data && \
@@ -39,5 +41,5 @@ RUN useradd -m -u 1000 appuser && \
 USER appuser
 
 
-# Execute the orchestrator
-CMD ["python", "-m", "src.run_agent"]
+# Execute startup dependency checks, then launch the orchestrator.
+CMD ["python", "-m", "src.run_with_dependency_checks"]

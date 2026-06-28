@@ -1,11 +1,11 @@
 resource "azurerm_cognitive_account" "foundry" {
-  name                          = "foundry-viva-swastik-99"
+  name                          = "foundry-dlq-msg-router-99"
   location                      = var.location
   resource_group_name           = var.resource_group_name
   kind                          = "AIServices"
   sku_name                      = "S0"
   public_network_access_enabled = false
-  custom_subdomain_name         = "foundry-viva-swastik-99"
+  custom_subdomain_name         = "foundry-dlq-msg-router-99"
 }
 
 

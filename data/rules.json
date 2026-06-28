@@ -76,7 +76,7 @@
     }
   ],
   "queue_overrides": {
-    "viva-integration-queue": [
+    "integration-queue": [
       {
         "rule_id": "app_004",
         "severity_score": 50,

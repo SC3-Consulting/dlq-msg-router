@@ -21,6 +21,29 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s')
 logger = logging.getLogger("IntegrationConsumer")
 
+
+def _to_text(value) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _message_body_to_text(message) -> str:
+    try:
+        body = message.body
+        if isinstance(body, (bytes, bytearray)):
+            return bytes(body).decode("utf-8", errors="replace")
+
+        if body is None:
+            return ""
+
+        return b"".join(
+            chunk if isinstance(chunk, bytes) else _to_text(chunk).encode("utf-8")
+            for chunk in body
+        ).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
 def process_queue(queue_name: str, fully_qualified_namespace: str, credential: DefaultAzureCredential) -> None:
     if shutdown_event.is_set():
         return
@@ -42,12 +65,12 @@ def process_queue(queue_name: str, fully_qualified_namespace: str, credential: D
                     try:
                         message_type = ""
                         if message.application_properties and b"message_type" in message.application_properties:
-                            message_type = message.application_properties[b"message_type"].decode('utf-8')
+                            message_type = _to_text(message.application_properties[b"message_type"])
                         elif message.application_properties and "message_type" in message.application_properties:
-                            message_type = message.application_properties["message_type"]
+                            message_type = _to_text(message.application_properties["message_type"])
 
                         try:
-                            raw_payload = b"".join(message.body).decode('utf-8', errors='replace')
+                            raw_payload = _message_body_to_text(message)
                             payload = json.loads(raw_payload)
                         except json.JSONDecodeError:
                             thread_logger.error(f"Rejecting {message.message_id}: Malformed JSON")

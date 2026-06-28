@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # The Autonomous DLQ Triage Pipeline
   dlq-agent:
@@ -9,7 +7,8 @@ services:
     container_name: autonomous-dlq-agent
     restart: unless-stopped
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       # Commented out to force DefaultAzureCredential to fall back to Azure CLI
       # - AZURE_TENANT_ID=${AZURE_TENANT_ID}
@@ -17,10 +16,86 @@ services:
       # - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
       # Force routing to the host machine's native Ollama instance to utilise hardware acceleration
       - OLLAMA_ENDPOINT=http://host.docker.internal:11434/api/generate
+      - SERVICE_BUS_CONNECTION_STRING=${SERVICE_BUS_CONNECTION_STRING:-}
+      - ENABLE_HEALTH_ENDPOINTS=true
+      - HEALTHCHECK_HOST=0.0.0.0
+      - HEALTHCHECK_PORT=8080
+      - ENABLE_DEPENDENCY_WAIT=${ENABLE_DEPENDENCY_WAIT:-true}
+      - DEPENDENCY_WAIT_TIMEOUT_SECONDS=${DEPENDENCY_WAIT_TIMEOUT_SECONDS:-120}
+      - SHUTDOWN_TIMEOUT_SECONDS=30
+      - MAX_CONCURRENT_QUEUES=${MAX_CONCURRENT_QUEUES:-2}
+      - ASB_MAX_MESSAGE_COUNT=${ASB_MAX_MESSAGE_COUNT:-10}
+      - ASB_MAX_WAIT_TIME=${ASB_MAX_WAIT_TIME:-5}
+      - PREFETCH_COUNT=${PREFETCH_COUNT:-20}
+      - AGENT_CYCLE_SLEEP_SECONDS=${AGENT_CYCLE_SLEEP_SECONDS:-30}
+      - DRAIN_RETRY_MAX_ATTEMPTS=${DRAIN_RETRY_MAX_ATTEMPTS:-3}
+      - DRAIN_BACKOFF_BASE_SECONDS=${DRAIN_BACKOFF_BASE_SECONDS:-1.0}
+      - DRAIN_BACKOFF_MAX_SECONDS=${DRAIN_BACKOFF_MAX_SECONDS:-30.0}
     volumes:
-      # Bind mounts to persist state and rules across container restarts
-      - ./data:/app/data
-      - ./reports:/app/reports
+      # Named volumes avoid host-path and permission issues in Docker-outside-of-Docker setups.
+      - dlq_agent_data:/app/data
+      - dlq_agent_reports:/app/reports
     # Cross-platform networking standard to reach local native services from inside the container
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health').read()\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+
+  # Optional: Azure Service Bus local emulator stack (opt-in via --profile asb-emulator)
+  servicebus-emulator:
+    profiles: ["asb-emulator"]
+    container_name: servicebus-emulator
+    build:
+      context: ./infra/local/servicebus-emulator
+      dockerfile: Dockerfile
+    image: local/servicebus-emulator:dev
+    environment:
+      SQL_SERVER: mssql
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
+      ACCEPT_EULA: ${ACCEPT_EULA:-N}
+      EMULATOR_HTTP_PORT: ${EMULATOR_HTTP_PORT:-5300}
+    ports:
+      - "5672:5672"
+      - "${EMULATOR_HTTP_PORT:-5300}:${EMULATOR_HTTP_PORT:-5300}"
+    depends_on:
+      - mssql
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mssql:
+    profiles: ["asb-emulator"]
+    container_name: mssql
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: ${ACCEPT_EULA:-N}
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  dlq_agent_data:
+  dlq_agent_reports:
