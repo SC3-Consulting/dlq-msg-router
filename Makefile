@@ -1,5 +1,5 @@
 VENV ?= .venv
-PYTHON := $(VENV)/bin/python
+PYTHON ?= $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,$(shell command -v python3 || command -v python))
 COVERAGE_FAIL_UNDER ?= 85
 SKIP_LLM_CHECK ?= 0
 PYLINT_ARGS ?= --errors-only
