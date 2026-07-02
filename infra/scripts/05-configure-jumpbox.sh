@@ -68,7 +68,7 @@ if [[ "${CURRENT_BRANCH}" != "bash-migration-test" ]]; then
   exit 1
 fi
 
-readonly RG_NAME="rg-dlq-msg-router-${ENVIRONMENT}"
+readonly RG_NAME="rg-viva-dlq-${ENVIRONMENT}"
 readonly VM_NAME="vm-jumpbox-${ENVIRONMENT}"
 
 echo "==> Initiating secure Bastion SSH payload delivery to ${VM_NAME}..."

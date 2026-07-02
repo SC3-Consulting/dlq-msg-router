@@ -57,7 +57,7 @@ terraform "${DESTROY_ARGS[@]}"
 # Perform complete bootstrap storage group purge if explicitly requested (Resolves Destroy TODO Requirement)
 if [ "${FULL_PURGE}" = true ]; then
   echo "[!] CRITICAL: Full purge requested. Eradicating state resource group boundaries..."
-  readonly RG_TARGET="rg-dlq-msg-router-${ENVIRONMENT}"
+  readonly RG_TARGET="rg-viva-dlq-${ENVIRONMENT}"
   if az group exists --name "${RG_TARGET}" &>/dev/null; then
     az group delete --name "${RG_TARGET}" --yes --no-wait
     echo "[+] Group erasure request queued on Azure plane."

@@ -33,7 +33,7 @@ if ! az account show >/dev/null 2>&1; then
   exit 1
 fi
 
-readonly RESOURCE_GROUP_NAME="rg-dlq-msg-router-${ENVIRONMENT}"
+readonly RESOURCE_GROUP_NAME="rg-viva-dlq-${ENVIRONMENT}"
 
 # Validate Resource Group exists before Terraform data block crashes
 echo "==> Validating Resource Group existence..."
