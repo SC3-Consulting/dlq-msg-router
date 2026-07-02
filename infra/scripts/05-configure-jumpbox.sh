@@ -72,25 +72,26 @@ readonly RG_NAME="rg-viva-dlq-${ENVIRONMENT}"
 readonly VM_NAME="vm-jumpbox-${ENVIRONMENT}"
 
 echo "==> Initiating secure Bastion SSH payload delivery to ${VM_NAME}..."
+# We prefer piping a self-contained setup script directly into the Bastion SSH session.
+# Some older Azure CLI versions do not support the `--command` flag. Try the direct
+# `az network bastion ssh --command` approach first; if that fails, fall back to
+# using `az network bastion tunnel` and a local `ssh` to the forwarded port.
 
-# We pipe a self-contained setup script directly into the Bastion SSH session.
-# 'EOF' is deliberately unquoted so local Bash variables are evaluated before injection.
-az network bastion ssh \
-  --name "bas-${ENVIRONMENT}" \
-  --resource-group "${RG_NAME}" \
-  --target-resource-id $(az vm show --resource-group "${RG_NAME}" --name "${VM_NAME}" --query id -o tsv) \
-  --auth-type "ssh-key" \
-  --username "azureuser" \
-  --ssh-key "${SSH_KEY_PATH}" \
-  --command "bash -s" << EOF
+echo "==> Azure CLI: $(az --version 2>/dev/null | head -n1 || echo 'az not found')"
+echo "==> az path: $(command -v az || true)"
+readonly VM_ID=$(az vm show --resource-group "${RG_NAME}" --name "${VM_NAME}" --query id -o tsv)
+
+# Prepare payload (unquoted so local variables are expanded) for reuse in both paths
+BASTION_PAYLOAD=$(cat <<PAYLOAD
 set -euo pipefail
 
 echo "    [+] (Remote) Installing Azure CLI..."
 curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash >/dev/null 2>&1
 
-echo "    [+] (Remote) Updating APT packages and installing Python/Docker toolchains..."
+echo "    [+] (Remote) Updating APT packages and installing Git, Snap, Terraform, Python and Docker toolchains..."
 sudo apt-get update >/dev/null 2>&1
-sudo apt-get install -y docker.io python3-pip python3-venv >/dev/null 2>&1
+sudo apt-get install -y git curl snapd docker.io python3-pip python3-venv >/dev/null 2>&1
+sudo snap install terraform --classic >/dev/null 2>&1
 sudo chmod 666 /var/run/docker.sock || true
 
 echo "    [+] (Remote) Synchronising codebase from ${REPO_URL} (Branch: ${CURRENT_BRANCH})..."
@@ -158,6 +159,52 @@ AZURE_FOUNDRY_MAX_TOKENS=300
 INNER_EOF
 
 echo "    [+] (Remote) Jumpbox environment fully provisioned and ready for live-fire simulation."
+PAYLOAD
+)
+
+# Use az network bastion tunnel with the Standard SKU and native tunneling enabled.
+LOCAL_PORT=$((55000 + (RANDOM % 1000)))
+
+echo "==> Opening Bastion tunnel on port ${LOCAL_PORT} (waiting up to 30s)..."
+
+az network bastion tunnel \
+  --name "bas-${ENVIRONMENT}" \
+  --resource-group "${RG_NAME}" \
+  --target-resource-id "${VM_ID}" \
+  --resource-port 22 \
+  --port "${LOCAL_PORT}" &
+TUNNEL_PID=$!
+
+LOCAL_PORT_READY=false
+for i in {1..180}; do
+  if bash -c "</dev/tcp/localhost/${LOCAL_PORT}" >/dev/null 2>&1; then
+    LOCAL_PORT_READY=true
+    break
+  fi
+  sleep 0.5
+done
+
+if [[ "${LOCAL_PORT_READY}" != true ]]; then
+  echo "[-] Error: Bastion tunnel did not open local port ${LOCAL_PORT}." >&2
+  kill ${TUNNEL_PID} >/dev/null 2>&1 || true
+  exit 1
+fi
+
+if ! kill -0 ${TUNNEL_PID} >/dev/null 2>&1; then
+  echo "[-] Error: Bastion tunnel process exited early." >&2
+  exit 1
+fi
+
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_PATH}" -p "${LOCAL_PORT}" azureuser@localhost "bash -s" <<EOF
+${BASTION_PAYLOAD}
 EOF
 
-echo "[+] Phase 3 Bastion Configuration Complete. Simulator environment is armed."
+SSH_EXIT=$?
+kill ${TUNNEL_PID} >/dev/null 2>&1 || true
+
+if [[ ${SSH_EXIT} -ne 0 ]]; then
+  echo "[-] Error: Remote provisioning failed over bastion tunnel." >&2
+  exit ${SSH_EXIT}
+fi
+
+echo "[+] Phase 3 Bastion Configuration Complete via tunnel. Simulator environment is armed."

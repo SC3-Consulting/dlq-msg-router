@@ -33,8 +33,8 @@ let lookback = 24h;
 ContainerAppConsoleLogs_CL
 | where TimeGenerated >= ago(lookback)
 | where ContainerAppName_s == appName
-| where Log_s startswith "JSON_EXPORT|"
-| extend evt = parse_json(substring(Log_s, 12))
+| where Log_s contains "JSON_EXPORT|"
+| extend evt = parse_json(substring(Log_s, indexof(Log_s, "JSON_EXPORT|") + 12))
 | extend source_queue = tostring(evt.source_queue)
 | extend status = tostring(evt.status)
 | summarize
@@ -55,7 +55,7 @@ let lookback = 24h;
 ContainerAppConsoleLogs_CL
 | where TimeGenerated >= ago(lookback)
 | where ContainerAppName_s == appName
-| where Log_s startswith "JSON_EXPORT|"
+| where Log_s contains "JSON_EXPORT|"
 | summarize messages = count() by bin(TimeGenerated, 5m)
 | order by TimeGenerated asc
 ```
@@ -70,8 +70,8 @@ let lookback = 24h;
 ContainerAppConsoleLogs_CL
 | where TimeGenerated >= ago(lookback)
 | where ContainerAppName_s == appName
-| where Log_s startswith "JSON_EXPORT|"
-| extend evt = parse_json(substring(Log_s, 12))
+| where Log_s contains "JSON_EXPORT|"
+| extend evt = parse_json(substring(Log_s, indexof(Log_s, "JSON_EXPORT|") + 12))
 | extend action = tostring(evt.suggested_action)
 | where isnotempty(action)
 | summarize total = count() by action
@@ -88,8 +88,8 @@ let lookback = 24h;
 ContainerAppConsoleLogs_CL
 | where TimeGenerated >= ago(lookback)
 | where ContainerAppName_s == appName
-| where Log_s startswith "JSON_EXPORT|"
-| extend evt = parse_json(substring(Log_s, 12))
+| where Log_s contains "JSON_EXPORT|"
+| extend evt = parse_json(substring(Log_s, indexof(Log_s, "JSON_EXPORT|") + 12))
 | summarize
     total_messages = count(),
     escalated_messages = countif(tolower(tostring(evt.suggested_action)) == "escalate")

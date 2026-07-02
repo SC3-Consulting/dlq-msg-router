@@ -21,7 +21,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly TF_DIR="${ROOT_DIR}/infra/terraform/azure"
 
-#Strict validation of required configuration files
+# Strict validation of required configuration files
 if [[ ! -f "${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl" ]]; then
   echo "Error: Missing backend configuration. Run phase 1 and 2 first." >&2
   exit 1
