@@ -168,7 +168,7 @@ Ensure you execute these commands from the repository root to avoid `ModuleNotFo
 ### Setting up Azure AI Foundry
 The production agent utilises Azure AI Foundry. It connects passwordless via `DefaultAzureCredential`. Ensure the container's User-Assigned Managed Identity is granted the `Cognitive Services OpenAI User` role on the Foundry resource. Required environment variables: `AI_PROVIDER="AZURE_FOUNDRY"`, `AZURE_FOUNDRY_ENDPOINT`, and `AZURE_FOUNDRY_DEPLOYMENT_NAME`.
 
-TODO: Add this step to the Deployment Runbook if not already there. Automate this during environment build rather than have a dependency on a manual step.
+**Automation Note:** This configuration is fully automated. The Phase 2 deployment module provisions the required `Cognitive Services OpenAI User` role bindings. Furthermore, the Phase 3 (`05-configure-jumpbox.sh`) and Phase 4 (`04-deploy-agent.sh`) bash scripts dynamically extract the `AZURE_FOUNDRY_ENDPOINT` from the remote state and inject it into the local `.env` and Container App environments, preventing manual configuration drift.
 
 ## 3. Cloud Cost Control & Infrastructure Teardown
 
@@ -182,14 +182,16 @@ Manually scaling the Container App to zero via the Azure CLI **will not** stop t
 To successfully halt billing overnight, you must explicitly destroy the ephemeral compute and networking components via the Terraform orchestrator. This script surgically removes the expensive resources whilst preserving the Remote State (Storage Account) and Key Vault for rapid redeployment.
 
 **Halt Billing (Destroy Ephemeral Infrastructure):**
-Execute this from your local machine (not the Jumpbox):
+Execute this from your local machine (not the Jumpbox) to destroy the network and compute resources while preserving the Terraform state:
 
-    pwsh ./infra/scripts/99-destroy-all.ps1
+```bash
+bash ./infra/scripts/99-destroy-all.sh -e <env>
+```
+
+*(Architectural Note: To execute a complete eradication, including the state storage and Key Vault, append the `--full-purge` flag).*
 
 **Resume Operations:**
-Execute Phase 2 and Phase 4 from the Deployment Runbook to restore the network and agent.
-
-TODO: clarify what the Deployment Runbook is
+Execute Phase 2 and Phase 4 from the `DEPLOYMENT_RUNBOOK.md` (located in the repository docs folder) to restore the network and agent.
 
 ## 4. The Human-in-the-Loop Concept & Parking Lot Remediation
 
@@ -246,7 +248,7 @@ Proof of successful User-Assigned token acquisition from the container trace:
 ### 2. The Split-Brain Typo (`amqp:not-found`)
 **Symptom:** The simulators crash immediately upon execution with an AMQP not found exception.
 **Root Cause:** The Terraform infrastructure provisioned a specific queue (e.g., `payments-queue`), but local fallback JSON configurations (`data/asb_sources.json`) contain a typo (e.g., `payments-queue` vs `integration-queue`).
-**Resolution:** Enable dynamic topology mapping by setting `ENABLE_DYNAMIC_DISCOVERY="True"` in the `.env` file. This forces the agent and simulators to query the `ServiceBusAdministrationClient` to programmatically discover the true state of the namespace, bypassing static JSON typos entirely.
+**Resolution:** Enable dynamic topology mapping by setting `ENABLE_DYNAMIC_DISCOVERY="True"` in the `.env` file. This forces the agent and simulators to query the `ServiceBusAdministrationClient` to programmatically discover the true state of the namespace, bypassing static JSON typos entirely.*(Note: The `05-configure-jumpbox.sh` provisioning script natively injects this setting to protect Jumpbox simulators automatically).*
 
 ### 3. AI Inference Causes AMQP Connection Drops (Local Dev Only)
 **Symptom:** The local agent logs `amqp:connection:forced` followed by a cascade of `ValueError: Link already closed` errors.
