@@ -29,6 +29,8 @@ done
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly TF_DIR="${ROOT_DIR}/infra/terraform/azure"
+readonly BACKEND_FILE="${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl"
+readonly BOOTSTRAP_VARS_FILE="${TF_DIR}/environments/${ENVIRONMENT}/bootstrap.generated.tfvars"
 readonly SSH_KEY_PATH="${HOME}/.ssh/dlq_jumpbox_rsa"
 
 # Pre-flight validation
@@ -42,11 +44,21 @@ if [[ ! -d "${TF_DIR}/.terraform" ]]; then
   exit 1
 fi
 
+for f in "${BACKEND_FILE}" "${BOOTSTRAP_VARS_FILE}"; do
+  if [[ ! -f "${f}" ]]; then
+    echo "[-] Error: Required Terraform runtime file missing at ${f}. Run Phase 1 and Phase 2 first." >&2
+    exit 1
+  fi
+done
+
 echo "==> Scraping dynamic infrastructure endpoints from Terraform state..."
 cd "${TF_DIR}"
 readonly SB_FQDN=$(terraform output -raw servicebus_namespace_fqdn)
 readonly FOUNDRY_EP=$(terraform output -raw foundry_endpoint)
 readonly CLIENT_ID=$(terraform output -raw agent_identity_client_id)
+readonly FOUNDRY_DEPLOYMENT_NAME="${FOUNDRY_EP##*/}"
+readonly BACKEND_HCL_CONTENT="$(cat "${BACKEND_FILE}")"
+readonly BOOTSTRAP_VARS_CONTENT="$(cat "${BOOTSTRAP_VARS_FILE}")"
 
 echo "==> Resolving active Git repository and branch..."
 cd "${ROOT_DIR}"
@@ -113,6 +125,16 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt >/dev/null 2>&1
 
+echo "    [+] (Remote) Injecting Terraform backend metadata for image push and remote state access..."
+mkdir -p "infra/terraform/azure/environments/${ENVIRONMENT}"
+cat <<'INNER_EOF' > "infra/terraform/azure/environments/${ENVIRONMENT}/backend.hcl"
+${BACKEND_HCL_CONTENT}
+INNER_EOF
+
+cat <<'INNER_EOF' > "infra/terraform/azure/environments/${ENVIRONMENT}/bootstrap.generated.tfvars"
+${BOOTSTRAP_VARS_CONTENT}
+INNER_EOF
+
 echo "    [+] (Remote) Generating dynamic simulator .env configuration..."
 cat << INNER_EOF > .env
 # Azure Service Bus Configuration
@@ -152,7 +174,7 @@ RULES_FILE_PATH="data/rules.json"
 
 AI_PROVIDER="AZURE_FOUNDRY"
 AZURE_FOUNDRY_ENDPOINT="${FOUNDRY_EP}"
-AZURE_FOUNDRY_DEPLOYMENT_NAME="gpt-4o-mini"
+AZURE_FOUNDRY_DEPLOYMENT_NAME="${FOUNDRY_DEPLOYMENT_NAME}"
 AZURE_FOUNDRY_TEMPERATURE=0.1
 AGENT_CYCLE_SLEEP_SECONDS=60
 AZURE_FOUNDRY_MAX_TOKENS=300

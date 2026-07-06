@@ -23,7 +23,7 @@ readonly TF_DIR="${ROOT_DIR}/infra/terraform/azure"
 
 # Strict validation of required configuration files
 if [[ ! -f "${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl" ]]; then
-  echo "Error: Missing backend configuration. Run phase 1 and 2 first." >&2
+  echo "Error: Missing backend configuration. Run phase 1 and 2 first, then rerun 05-configure-jumpbox.sh from your local workstation to sync generated Terraform files onto the jumpbox." >&2
   exit 1
 fi
 

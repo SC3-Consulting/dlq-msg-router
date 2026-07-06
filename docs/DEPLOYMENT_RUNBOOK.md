@@ -23,8 +23,12 @@ Before initiating the deployment, authenticate the local terminal.
 ``` bash
 sudo apt-get update
 sudo apt-get upgrade
+
 curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash # install Azure CLI
+az extension add -n ssh
+
 sudo apt install build-essential # optional for make commands, or just run sudo apt install make
+
 sudo apt-get install python3-venv # create the project's Python virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
@@ -132,7 +136,7 @@ bash ./infra/scripts/05-configure-jumpbox.sh -e "${TARGET_ENV}"
 Once the provisioning script completes successfully, use the Azure CLI to tunnel directly into the Jumpbox. 
 
 ```bash
-az network bastion ssh --name "bas-<env>" --resource-group "rg-example-dlq-<env>" --target-resource-id $(az vm show --resource-group "rg-example-dlq-<env>" --name "vm-jumpbox-<env>" --query id -o tsv) --auth-type "ssh-key" --username "azureuser" --ssh-key ~/.ssh/dlq_jumpbox_rsa
+az network bastion ssh --name "bas-${TARGET_ENV}" --resource-group "rg-example-dlq-${TARGET_ENV}" --target-resource-id $(az vm show --resource-group "rg-example-dlq-${TARGET_ENV}" --name "vm-jumpbox-${TARGET_ENV}" --query id -o tsv) --auth-type "ssh-key" --username "azureuser" --ssh-key ~/.ssh/dlq_jumpbox_rsa
 ```
 Fallback manual workflow if script fails to run:
 1. Navigate to the Azure Portal.
@@ -142,11 +146,11 @@ Fallback manual workflow if script fails to run:
 5. Upload the private key (`~/.ssh/dlq_jumpbox_rsa` - select the file WITHOUT the `.pub` extension).
 6. Uncheck 'Open in new browser tab', then click 'Connect'.
 
-
-Once inside the Jumpbox terminal, execute the image push. *(Note: The Jumpbox Managed Identity has been granted the `Storage Blob Data Contributor` role, allowing it to seamlessly read the remote state and retrieve the ACR credentials).*
+Then while still on the jumbox, execute the image push. *(Note: The Jumpbox Managed Identity has been granted the `Storage Blob Data Contributor` role, allowing it to seamlessly read the remote state and retrieve the ACR credentials).*
 
 ```bash
 cd dlq-msg-router
+TARGET_ENV="dev"
 bash ./infra/scripts/03-push-image.bash -e "${TARGET_ENV}"
 ```
 
