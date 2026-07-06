@@ -7,7 +7,7 @@ agent_subnet_cidr            = "10.20.2.0/24"
 container_apps_subnet_cidr   = "10.20.5.0/24"
 jumpbox_subnet_cidr          = "10.20.3.0/24"
 azure_bastion_subnet_cidr    = "10.20.4.0/24"
-jumpbox_vm_size              = "Standard_B2s"
+jumpbox_vm_size              = "Standard_D2s_v3"
 container_image_tag          = "v1.0.0-dev"
 agent_container_cpu          = 0.5
 agent_container_memory       = "1Gi"
@@ -27,11 +27,17 @@ app_env_vars = {
   HEALTHCHECK_PORT              = "8080"
   SHUTDOWN_TIMEOUT_SECONDS      = "30"
   AI_PROVIDER                   = "AZURE_FOUNDRY"
-  AZURE_FOUNDRY_ENDPOINT        = "https://foundry-dlq-msg-router-dev.cognitiveservices.azure.com/openai/deployments/gpt-4o-mini"
-  AZURE_FOUNDRY_DEPLOYMENT_NAME = "gpt-4o-mini"
+  AZURE_FOUNDRY_ENDPOINT        = "https://foundry-dlq-msg-router-dev.cognitiveservices.azure.com/openai/deployments/gpt-5-mini"
+  AZURE_FOUNDRY_DEPLOYMENT_NAME = "gpt-5-mini"
   AZURE_FOUNDRY_MAX_TOKENS      = "300"
   RULES_FILE_PATH               = "data/rules.json"
   AGENT_CYCLE_SLEEP_SECONDS     = "60"
+}
+
+query_model = {
+  name     = "gpt-5-mini"
+  version  = "2025-08-07"
+  capacity = 1
 }
 
 # Map sensitive runtime settings to Key Vault secret names.

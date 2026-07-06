@@ -48,6 +48,20 @@ variable "jumpbox_vm_size" {
   description = "VM size for the jumpbox host."
 }
 
+variable "query_model" {
+  type = object({
+    name     = string
+    version  = string
+    capacity = optional(number, 1)
+  })
+  description = "Model deployment configuration for Azure Foundry query workloads."
+  default = {
+    name     = "gpt-5-mini"
+    version  = "2025-08-07"
+    capacity = 1
+  }
+}
+
 variable "jumpbox_admin_ssh_public_key" {
   type        = string
   description = "SSH public key for jumpbox admin access."

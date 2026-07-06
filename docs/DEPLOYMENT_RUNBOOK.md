@@ -6,7 +6,7 @@ Every command, operational trap, and environmental patch required to deploy the 
 
 ## Architectural Context & Permission Constraints
 
-To adhere to strict enterprise security mandates, the deployment is orchestrated via PowerShell wrappers. This ensures secure injection of CLI credentials without exposing sensitive variables to version control. 
+To adhere to strict enterprise security mandates, the deployment is orchestrated via either PowerShell wrappers or Bash scripts. This ensures secure injection of CLI credentials without exposing sensitive variables to version control. 
 
 **The Resource Group Strategy:** Separating the remote state storage (Storage Account and Key Vault) into a dedicated resource group separate to the other resources is best practice. However, due to tenant-level 'User Access Administrator' restrictions preventing cross-resource-group role assignments in a restricted sandbox development environment, all infrastructure — including the state bootstrap — is encapsulated within a pre-existing resource group (e.g., `rg-dlq-msg-router-<env>`) where 'Owner' permissions are already established. This allows Terraform to autonomously execute the required 'Storage Blob Data Contributor' and 'Key Vault Secrets Officer' role assignments without elevated tenant approvals. In an Enterprise Production deployment, consideration should be made to refactor this implementation using multiple resource groups aligned with support responsibilities and appropriate boundary demarcations.
 
@@ -18,10 +18,54 @@ Before initiating the deployment, authenticate the local terminal.
 
 **Architectural Note (The Ephemeral Storage Bypass):** Azure Container Apps utilise ephemeral disks. Attempting to extract physical CSV telemetry files triggers an 'AuthorizationFailed' RBAC error. To bypass this securely, the repository's codebase (`src/run_agent.py`) is already pre-configured to broadcast telemetry directly to Azure Log Analytics via standard output. It intercepts the telemetry array and prints it using the following format: `print(f"CSV_EXPORT|{','.join(map(str, row))}")`. No manual code patching is required.
 
+0. Base build environment
+
+``` bash
+sudo apt-get update
+sudo apt-get upgrade
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash # install Azure CLI
+sudo apt install build-essential # optional for make commands, or just run sudo apt install make
+sudo apt-get install python3-venv # create the project's Python virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt # install project dependencies into the venv
+
+sudo ./infra/scripts/install-terraform.bash # install Terraform
+```
+
+Minimum tool versions for this repository:
+- Terraform >= 1.9.0
+- Azure CLI >= 2.30.0 (required for `az account get-access-token --scope ...`, used by `azurerm` provider v4)
+
+Validate the Azure CLI capability before Phase 1:
+
+```bash
+az version --query '"azure-cli"' -o tsv
+az account get-access-token --scope https://graph.microsoft.com/.default -o none
+```
+
 1. Authenticate with Azure using the device code flow for secure, headless login:
 
 ```bash
 az login --use-device-code
+```
+
+1a. If to be deployed to a different subscription to the default associated with your login and not selected at time of login:
+
+```bash
+az account set --subscription "My Subscription Name"
+```
+
+1b. If need to create the resource group and have permissions to do so:
+
+```bash
+# check if resource group exists
+TARGET_ENV="dev" # or test or prod
+TARGET_LOCATION="australiaeast"
+az group show --name "rg-dlq-msg-router-${TARGET_ENV}"
+
+# if does not exist, create (assuming you have permissions to do so within the subscription)
+az group create --name "rg-dlq-msg-router-${TARGET_ENV}" --location "${TARGET_LOCATION}"
 ```
 
 2. **Trap Resolution (Soft-Deleted Vaults):** Azure retains Key Vaults in a soft-deleted state, blocking recreation. If a previous deployment was torn down, purge the old vault manually before proceeding. Replace the name with your specific vault target:
@@ -39,7 +83,9 @@ az keyvault purge --name kvtfstatelogia7 --location australiaeast
 1. Execute the Phase 1 Bash orchestrator from your local repository root:
 
 ```bash
-bash ./infra/scripts/01-bootstrap.sh -e <env> -l <location>
+TARGET_ENV="dev" # or test or prod
+TARGET_LOCATION="australiaeast"
+bash ./infra/scripts/01-bootstrap.sh -e "${TARGET_ENV}" -l "${TARGET_LOCATION}"
 ```
 
 2. **Automated State & Security Initialisation:** The `01-bootstrap.sh` script will autonomously generate the local SSH key pair (if not present), provision the remote state storage, inject the public key into the Key Vault, and generate the `backend.hcl` configuration. 
@@ -57,7 +103,7 @@ bash ./infra/scripts/01-bootstrap.sh -e <env> -l <location>
 1. Execute the Phase 2 orchestrator to deploy the VNet, ACR, Service Bus, and Azure Foundry endpoints:
 
 ```bash
-bash ./infra/scripts/02-deploy-network-and-data.sh -e <env>
+bash ./infra/scripts/02-deploy-network-and-data.sh -e "${TARGET_ENV}"
 ```
 
 2. Commit the structural changes to version control to ensure the remote repository is prepared for the jumpbox pull:
@@ -80,7 +126,7 @@ The Jumpbox is a naked Ubuntu instance. We utilise a Bash script to establish a 
 Execute this from your **local laptop terminal**:
 
 ```bash
-bash ./infra/scripts/05-configure-jumpbox.sh -e <env>
+bash ./infra/scripts/05-configure-jumpbox.sh -e "${TARGET_ENV}"
 ```
 ### 2. Connect via Bastion & Push the Image
 Once the provisioning script completes successfully, use the Azure CLI to tunnel directly into the Jumpbox. 
@@ -101,7 +147,7 @@ Once inside the Jumpbox terminal, execute the image push. *(Note: The Jumpbox Ma
 
 ```bash
 cd dlq-msg-router
-bash ./infra/scripts/03-push-image.bash -e <env>
+bash ./infra/scripts/03-push-image.bash -e "${TARGET_ENV}"
 ```
 
 Once the image push completes, type `exit` to return to your local terminal.
@@ -128,7 +174,7 @@ Return to the **local laptop terminal** and deploy the agent.
 **Architectural Note (Dynamic Variables):** The deployment module natively extracts `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE` and `AZURE_FOUNDRY_ENDPOINT` directly from the Terraform outputs. These are dynamically injected into the Azure Container App environment variables, preventing startup crashes.
 
 ```bash
-bash ./infra/scripts/04-deploy-agent.sh -e <env>
+bash ./infra/scripts/04-deploy-agent.sh -e "${TARGET_ENV}"
 ```
 
 ## Phase 5: Live Fire Simulation
@@ -198,7 +244,7 @@ For additional LAW KQL queries, see [OPERATOR_DASHBOARD_QUERIES](OPERATOR_DASHBO
 From the **local laptop terminal**, execute the teardown script to destroy all compute and networking resources. This standard execution deliberately preserves the Storage Account and Key Vault so the Terraform state remains intact.
 
 ```bash
-bash ./infra/scripts/99-destroy-all.sh -e <env>
+bash ./infra/scripts/99-destroy-all.sh -e "${TARGET_ENV}"
 ```
 
 *(Architectural Note: If a complete eradication of the environment is required, including the underlying Terraform state files, Storage Account, and Key Vault, append the `--full-purge` flag to the command above).*
@@ -211,5 +257,5 @@ To resolve this:
 3. Run the destroy script one final time to purge the NSG from the local Terraform state cleanly:
 
 ```bash
-bash ./infra/scripts/99-destroy-all.sh -e <env>
+bash ./infra/scripts/99-destroy-all.sh -e "${TARGET_ENV}"
 ```

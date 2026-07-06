@@ -62,6 +62,7 @@ module "foundry" {
   resource_group_name       = module.foundation.resource_group_name
   location                  = var.location
   suffix                    = var.environment
+  query_model               = var.query_model
   delegated_agent_subnet_id = module.network.agent_subnet_id
   enable_model_deployments  = true
 }
@@ -91,8 +92,8 @@ module "identity" {
 }
 
 data "azurerm_storage_account" "state_backend" {
-  name                = regex("storage_account_name\\s*=\\s*\"([^\"]+)\"", file("${path.module}/environments/${var.environment}/backend.hcl"))[1]
-  resource_group_name = regex("resource_group_name\\s*=\\s*\"([^\"]+)\"", file("${path.module}/environments/${var.environment}/backend.hcl"))[1]
+  name                = regex("storage_account_name\\s*=\\s*\"([^\"]+)\"", file("${path.module}/environments/${var.environment}/backend.hcl"))[0]
+  resource_group_name = regex("resource_group_name\\s*=\\s*\"([^\"]+)\"", file("${path.module}/environments/${var.environment}/backend.hcl"))[0]
 }
 
 resource "azurerm_role_assignment" "jumpbox_state_blob_data_contributor" {

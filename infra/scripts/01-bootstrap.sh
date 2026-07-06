@@ -27,6 +27,32 @@ readonly ENV_DIR="${ROOT_DIR}/infra/terraform/azure/environments/${ENVIRONMENT}"
 
 mkdir -p "${ENV_DIR}"
 
+echo "==> Performing pre-flight dependency checks..."
+if ! command -v terraform >/dev/null 2>&1; then
+  echo "Terraform CLI is not installed or not in PATH." >&2
+  echo "Install Terraform and retry. On Debian/Ubuntu, see: https://developer.hashicorp.com/terraform/install" >&2
+  exit 1
+fi
+
+if ! command -v az >/dev/null 2>&1; then
+  echo "Azure CLI is not installed or not in PATH." >&2
+  exit 1
+fi
+
+readonly MIN_AZ_CLI_VERSION="2.30.0"
+az_cli_version="$(az version --query '"azure-cli"' -o tsv 2>/dev/null || true)"
+if [[ -z "${az_cli_version}" ]]; then
+  echo "Unable to determine Azure CLI version. Ensure 'az version' works and retry." >&2
+  exit 1
+fi
+
+if [[ "$(printf '%s\n' "${MIN_AZ_CLI_VERSION}" "${az_cli_version}" | sort -V | head -n1)" != "${MIN_AZ_CLI_VERSION}" ]]; then
+  echo "Azure CLI ${az_cli_version} is too old. Version ${MIN_AZ_CLI_VERSION} or newer is required." >&2
+  echo "Reason: Terraform azurerm provider requires an Azure CLI that supports 'az account get-access-token --scope ...'." >&2
+  echo "Upgrade Azure CLI and retry." >&2
+  exit 1
+fi
+
 echo "==> Verifying Azure login status..."
 if ! az account show >/dev/null 2>&1; then
   echo "Azure CLI is not authenticated. Run 'az login' first."
@@ -53,20 +79,36 @@ readonly SSH_PUB_KEY_CONTENT=$(cat "${SSH_KEY_PATH}.pub")
 
 echo "==> Registering Azure resource providers..."
 readonly PROVIDERS=("Microsoft.App" "Microsoft.KeyVault" "Microsoft.ServiceBus" "Microsoft.ContainerRegistry" "Microsoft.Storage")
-for provider in "${PROVIDERS[@]}"; do
-  az provider register --namespace "$provider" >/dev/null
-  for attempt in {1..20}; do
+readonly PROVIDER_WAIT_TIMEOUT_SECONDS=600
+readonly PROVIDER_WAIT_POLL_SECONDS=5
+
+wait_for_provider_registration() {
+  local provider="$1"
+  local elapsed=0
+  local state=""
+
+  while (( elapsed < PROVIDER_WAIT_TIMEOUT_SECONDS )); do
     state=$(az provider show --namespace "$provider" --query registrationState -o tsv 2>/dev/null || true)
     if [[ "$state" == "Registered" ]]; then
-      break
+      return 0
     fi
-    echo "    Waiting for provider ${provider} registration... (${attempt}/20)"
-    sleep 3
+
+    local attempt=$((elapsed / PROVIDER_WAIT_POLL_SECONDS + 1))
+    local max_attempts=$((PROVIDER_WAIT_TIMEOUT_SECONDS / PROVIDER_WAIT_POLL_SECONDS))
+    echo "    Waiting for provider ${provider} registration... (${attempt}/${max_attempts}) state=${state:-Unknown}"
+    sleep "${PROVIDER_WAIT_POLL_SECONDS}"
+    elapsed=$((elapsed + PROVIDER_WAIT_POLL_SECONDS))
   done
-  if [[ "$state" != "Registered" ]]; then
-    echo "Error: Azure provider ${provider} failed to reach 'Registered' state." >&2
-    exit 1
-  fi
+
+  state=$(az provider show --namespace "$provider" --query registrationState -o tsv 2>/dev/null || true)
+  echo "Error: Azure provider ${provider} failed to reach 'Registered' state after ${PROVIDER_WAIT_TIMEOUT_SECONDS}s (last state: ${state:-Unknown})." >&2
+  echo "Hint: Run 'az provider show --namespace ${provider} -o json' for additional diagnostics." >&2
+  return 1
+}
+
+for provider in "${PROVIDERS[@]}"; do
+  az provider register --namespace "$provider" >/dev/null
+  wait_for_provider_registration "$provider"
 done
 
 readonly STORAGE_ACCOUNT_PREFIX="sttfstate${ENVIRONMENT}"
