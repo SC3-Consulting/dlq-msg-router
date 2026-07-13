@@ -10,6 +10,7 @@ This module provides a utility to flush all messages from specified Azure Servic
 import json
 import logging
 import os
+import subprocess
 
 from azure.identity import DefaultAzureCredential
 from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode
@@ -20,6 +21,42 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("QueueFlusher")
+
+
+def _resolve_service_bus_namespace() -> str:
+    """Resolves Service Bus namespace from env first, then Terraform output fallback.
+
+    Returns:
+        str: Fully qualified Service Bus namespace, or empty string when unavailable.
+    """
+    namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE", "").strip()
+
+    # Guard against common placeholder values copied from .env.example.
+    if namespace and "your-namespace-here" not in namespace:
+        return namespace
+
+    try:
+        terraform_output = subprocess.check_output(
+            [
+                "terraform",
+                "-chdir=infra/terraform/azure",
+                "output",
+                "-raw",
+                "servicebus_namespace_fqdn",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        ).strip()
+        if terraform_output:
+            logger.info(
+                "Using SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE from Terraform output."
+            )
+            return terraform_output
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    return namespace
 
 
 def flush_queue(client, queue_name, is_dlq=False):
@@ -49,7 +86,7 @@ def flush_queue(client, queue_name, is_dlq=False):
 
 def main():
     """Main function to flush all specified queues and their DLQs."""
-    fully_qualified_namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE")
+    fully_qualified_namespace = _resolve_service_bus_namespace()
     sources_json = os.getenv(
         "ASB_SOURCES",
         '[{"type": "queue","name": "payments-queue"},{"type": "queue","name": "integration-queue"}]',

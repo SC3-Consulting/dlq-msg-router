@@ -152,6 +152,8 @@ Fallback manual workflow if script fails to run:
 
 Then while still on the jumpbox, execute the image push. *(Note: The Jumpbox Managed Identity has been granted the `Storage Blob Data Contributor` role, allowing it to seamlessly read the remote state and retrieve the ACR credentials).*
 
+**RBAC Propagation Note:** New or recently changed role assignments can take a short time to become effective. If `03-push-image.bash` fails during Terraform backend initialisation with a `403 AuthorizationPermissionMismatch`, wait 1-2 minutes and retry the command.
+
 ```bash
 cd dlq-msg-router
 TARGET_ENV="dev"
