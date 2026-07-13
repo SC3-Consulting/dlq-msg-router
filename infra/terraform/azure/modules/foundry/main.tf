@@ -4,8 +4,13 @@ resource "azurerm_cognitive_account" "foundry" {
   resource_group_name           = var.resource_group_name
   kind                          = "AIServices"
   sku_name                      = "S0"
+  project_management_enabled    = true
   public_network_access_enabled = false
   custom_subdomain_name         = "foundry-dlq-msg-router-99"
+
+  identity {
+    type = "SystemAssigned"
+  }
 }
 
 

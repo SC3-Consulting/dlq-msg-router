@@ -455,18 +455,18 @@ class AzureFoundryEngine(BaseAIEngine):
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
 
+        messages = [
+            SystemMessage(content="You are a strict, JSON-only classification AI."),
+            UserMessage(content=prompt),
+        ]
+
         self.logger.info(
             f"Invoking Azure Foundry model: {self.deployment_name} for client: {client_id}"
         )
 
         try:
             response = self.client.complete(
-                messages=[
-                    SystemMessage(
-                        content="You are a strict, JSON-only classification AI."
-                    ),
-                    UserMessage(content=prompt),
-                ],
+                messages=messages,
                 model=self.deployment_name,
                 max_tokens=self.max_tokens,  # Explicit real-time cost circuit breaker passed safely
                 **kwargs,
@@ -474,6 +474,21 @@ class AzureFoundryEngine(BaseAIEngine):
             raw_text = response.choices[0].message.content
             return self._salvage_json(raw_text)
         except Exception as e:
+            # Some models (for example gpt-5-mini) require max_completion_tokens
+            # instead of max_tokens. Retry once with the compatible parameter.
+            message = str(e)
+            if "max_completion_tokens" in message and "max_tokens" in message:
+                self.logger.warning(
+                    "Azure Foundry model rejected max_tokens; retrying with max_completion_tokens."
+                )
+                response = self.client.complete(
+                    messages=messages,
+                    model=self.deployment_name,
+                    max_completion_tokens=self.max_tokens,
+                    **kwargs,
+                )
+                raw_text = response.choices[0].message.content
+                return self._salvage_json(raw_text)
             self.logger.error(f"Azure Foundry API failure: {e}")
             raise
 

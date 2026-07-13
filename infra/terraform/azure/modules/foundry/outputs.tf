@@ -7,5 +7,5 @@ output "foundry_account_name" {
 }
 
 output "foundry_endpoint" {
-  value = "https://${azurerm_cognitive_account.foundry.name}.cognitiveservices.azure.com/openai/deployments/${var.query_model.name}"
+  value = "https://${azurerm_cognitive_account.foundry.name}.cognitiveservices.azure.com/"
 }

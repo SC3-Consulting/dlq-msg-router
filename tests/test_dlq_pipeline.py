@@ -825,6 +825,49 @@ def test_azure_foundry_engine_execution(mock_azure_client, monkeypatch):
     assert result["suggested_action"] == "drop"
 
 
+@pytest.mark.usefixtures("temp_env")
+@patch("src.ai_client.ChatCompletionsClient")
+def test_azure_foundry_engine_retries_with_max_completion_tokens(
+    mock_azure_client, monkeypatch
+):
+    """Proves compatibility retry for models that reject max_tokens."""
+    monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
+    monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+
+    engine = AIEngineFactory.get_engine()
+    assert isinstance(engine, AzureFoundryEngine)
+    azure_engine = cast(AzureFoundryEngine, engine)
+
+    mock_choice = MagicMock()
+    mock_choice.message.content = (
+        '{"suggested_classification": "Azure_Tested", "suggested_action": "drop"}'
+    )
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+
+    cast(Any, azure_engine.client).complete.side_effect = [
+        Exception(
+            "(unsupported_parameter) Unsupported parameter: 'max_tokens' is not supported with this model. "
+            "Use 'max_completion_tokens' instead."
+        ),
+        mock_response,
+    ]
+
+    result = azure_engine.call_llm(
+        "Client_1", "ValidationFailed", "Missing email", '{"account": "123"}'
+    )
+
+    assert result["suggested_action"] == "drop"
+    assert cast(Any, azure_engine.client).complete.call_count == 2
+
+    first_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[0].kwargs
+    second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    assert "max_tokens" in first_call_kwargs
+    assert "max_completion_tokens" not in first_call_kwargs
+    assert "max_completion_tokens" in second_call_kwargs
+
+
 def test_fix_and_retry_fallback_escalation(mock_infrastructure):
     """Proves that if a safe default is missing from rules.json, it degrades gracefully to Escalate."""
     router = ActionRouter(
