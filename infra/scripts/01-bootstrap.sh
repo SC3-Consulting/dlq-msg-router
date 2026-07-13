@@ -59,7 +59,7 @@ if ! az account show >/dev/null 2>&1; then
   exit 1
 fi
 
-readonly RESOURCE_GROUP_NAME="rg-viva-dlq-${ENVIRONMENT}"
+readonly RESOURCE_GROUP_NAME="rg-dlq-msg-router-${ENVIRONMENT}"
 
 # Validate Resource Group exists before Terraform data block crashes
 echo "==> Validating Resource Group existence..."
@@ -123,6 +123,12 @@ fi
 
 echo "==> Applying bootstrap Terraform stack..."
 cd "${BOOTSTRAP_DIR}"
+
+if [[ -f terraform.tfstate || -f terraform.tfstate.backup ]]; then
+  echo "==> Clearing stale local bootstrap Terraform state..."
+  rm -f terraform.tfstate terraform.tfstate.backup
+fi
+
 rm -rf .terraform
 terraform init -upgrade
 terraform apply -auto-approve -input=false \

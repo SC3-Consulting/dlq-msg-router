@@ -75,7 +75,7 @@ az group create --name "rg-dlq-msg-router-${TARGET_ENV}" --location "${TARGET_LO
 2. **Trap Resolution (Soft-Deleted Vaults):** Azure retains Key Vaults in a soft-deleted state, blocking recreation. If a previous deployment was torn down, purge the old vault manually before proceeding. Replace the name with your specific vault target:
 
 ```bash
-az keyvault purge --name kvtfstatelogia7 --location australiaeast
+az keyvault purge --name <kvtfstatexxxxxx> --location australiaeast
 ```
 
 ---
@@ -146,7 +146,7 @@ Fallback manual workflow if script fails to run:
 5. Upload the private key (`~/.ssh/dlq_jumpbox_rsa` - select the file WITHOUT the `.pub` extension).
 6. Uncheck 'Open in new browser tab', then click 'Connect'.
 
-Then while still on the jumbox, execute the image push. *(Note: The Jumpbox Managed Identity has been granted the `Storage Blob Data Contributor` role, allowing it to seamlessly read the remote state and retrieve the ACR credentials).*
+Then while still on the jumpbox, execute the image push. *(Note: The Jumpbox Managed Identity has been granted the `Storage Blob Data Contributor` role, allowing it to seamlessly read the remote state and retrieve the ACR credentials).*
 
 ```bash
 cd dlq-msg-router
@@ -256,7 +256,7 @@ bash ./infra/scripts/99-destroy-all.sh -e "${TARGET_ENV}"
 **Trap Resolution (The Bastion NSG Catch-22):** The teardown script will successfully delete the Virtual Network, but it may throw a '400 Bad Request' regarding 'nsg-azure-bastion'. This is a known Azure API race condition where Terraform attempts to delete mandatory security rules whilst Azure believes the Bastion subnet is still active.
 
 To resolve this:
-1. Go to the Azure Portal and open `rg-viva-dlq-<env>`.
+1. Go to the Azure Portal and open `rg-dlq-msg-router-<env>`.
 2. Locate the orphaned Network Security Group (`nsg-azure-bastion`) and click 'Delete' manually.
 3. Run the destroy script one final time to purge the NSG from the local Terraform state cleanly:
 

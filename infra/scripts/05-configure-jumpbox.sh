@@ -75,12 +75,13 @@ if [[ -z "${CURRENT_BRANCH}" ]]; then
   exit 1
 fi
 
+# TODO: Script should not have a dependency on a specific branch name. This is a temporary safeguard to ensure that the script is run from the correct context.
 if [[ "${CURRENT_BRANCH}" != "bash-migration-test" ]]; then
   echo "[-] Error: This script must be run from the 'bash-migration-test' branch. Current branch is '${CURRENT_BRANCH}'." >&2
   exit 1
 fi
 
-readonly RG_NAME="rg-viva-dlq-${ENVIRONMENT}"
+readonly RG_NAME="rg-dlq-msg-router-${ENVIRONMENT}"
 readonly VM_NAME="vm-jumpbox-${ENVIRONMENT}"
 
 echo "==> Initiating secure Bastion SSH payload delivery to ${VM_NAME}..."

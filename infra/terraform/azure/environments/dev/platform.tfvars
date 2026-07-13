@@ -1,6 +1,6 @@
 environment                  = "dev"
 location                     = "australiaeast"
-resource_group_name          = "rg-viva-dlq-dev"
+resource_group_name          = "rg-dlq-msg-router-dev"
 vnet_cidr                    = "10.20.0.0/16"
 private_endpoint_subnet_cidr = "10.20.1.0/24"
 agent_subnet_cidr            = "10.20.2.0/24"
