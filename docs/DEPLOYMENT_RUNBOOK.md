@@ -127,6 +127,8 @@ git push
 ### 1. Automate Jumpbox Provisioning
 The Jumpbox is a naked Ubuntu instance. We utilise a Bash script to establish a secure Bastion SSH tunnel. The script automatically installs `docker.io`, `python3-venv`, and `terraform`, clones the repository, and dynamically generates the simulator `.env` file using Terraform state outputs.
 
+TODO: Fix numeric ordering of scripts to reflect order they are to be run in.
+
 Execute this from your **local laptop terminal**:
 
 ```bash

@@ -53,9 +53,7 @@ else
 fi
 
 cd "${TF_DIR}"
-if [[ ! -d "${TF_DIR}/.terraform" ]]; then
-  terraform init -reconfigure -backend-config="${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl"
-fi
+terraform init -reconfigure -backend-config="${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl"
 
 # Read the proper output variable after Azure authentication is established.
 readonly ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server 2>/dev/null || true)
