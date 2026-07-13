@@ -40,17 +40,6 @@ if [[ -z "${CONTAINER_IMAGE_TAG:-}" ]]; then
   exit 1
 fi
 
-cd "${TF_DIR}"
-if [[ ! -d "${TF_DIR}/.terraform" ]]; then
-  terraform init -reconfigure -backend-config="${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl"
-fi
-#Read the proper output variable
-readonly ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server 2>/dev/null || true)
-if [[ -z "${ACR_LOGIN_SERVER:-}" ]]; then
-  echo "Error: Terraform output 'acr_login_server' is missing. Apply phase 2 and ensure outputs.tf exists." >&2
-  exit 1
-fi
-
 # Guard against running outside the Jumpbox
 echo "==> Authenticating to ACR..."
 if az login --identity >/dev/null 2>&1; then
@@ -61,6 +50,18 @@ else
     echo "Error: Azure authentication is not available. Run 'az login' or execute this script on the Azure Jumpbox." >&2
     exit 1
   fi
+fi
+
+cd "${TF_DIR}"
+if [[ ! -d "${TF_DIR}/.terraform" ]]; then
+  terraform init -reconfigure -backend-config="${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl"
+fi
+
+# Read the proper output variable after Azure authentication is established.
+readonly ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server 2>/dev/null || true)
+if [[ -z "${ACR_LOGIN_SERVER:-}" ]]; then
+  echo "Error: Terraform output 'acr_login_server' is missing. Apply phase 2 and ensure outputs.tf exists." >&2
+  exit 1
 fi
 
 if ! az acr login --name "${ACR_LOGIN_SERVER%%.*}" >/dev/null 2>&1; then

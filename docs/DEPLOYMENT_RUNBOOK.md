@@ -136,7 +136,7 @@ bash ./infra/scripts/05-configure-jumpbox.sh -e "${TARGET_ENV}"
 Once the provisioning script completes successfully, use the Azure CLI to tunnel directly into the Jumpbox. 
 
 ```bash
-az network bastion ssh --name "bas-${TARGET_ENV}" --resource-group "rg-example-dlq-${TARGET_ENV}" --target-resource-id $(az vm show --resource-group "rg-example-dlq-${TARGET_ENV}" --name "vm-jumpbox-${TARGET_ENV}" --query id -o tsv) --auth-type "ssh-key" --username "azureuser" --ssh-key ~/.ssh/dlq_jumpbox_rsa
+az network bastion ssh --name "bas-${TARGET_ENV}" --resource-group "rg-dlq-msg-router-${TARGET_ENV}" --target-resource-id $(az vm show --resource-group "rg-dlq-msg-router-${TARGET_ENV}" --name "vm-jumpbox-${TARGET_ENV}" --query id -o tsv) --auth-type "ssh-key" --username "azureuser" --ssh-key ~/.ssh/dlq_jumpbox_rsa
 ```
 Fallback manual workflow if script fails to run:
 1. Navigate to the Azure Portal.
