@@ -10,6 +10,7 @@ import os
 import json
 import time
 import logging
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from azure.servicebus import ServiceBusReceiveMode
 from azure.identity import DefaultAzureCredential
@@ -20,6 +21,35 @@ from src.run_agent import discover_target_queues, ServiceBusClientFactory, shutd
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s')
 logger = logging.getLogger("IntegrationConsumer")
+
+
+def _resolve_service_bus_namespace() -> str:
+    namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE", "").strip()
+    if namespace and "your-namespace-here" not in namespace:
+        return namespace
+
+    try:
+        terraform_output = subprocess.check_output(
+            [
+                "terraform",
+                "-chdir=infra/terraform/azure",
+                "output",
+                "-raw",
+                "servicebus_namespace_fqdn",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        ).strip()
+        if terraform_output:
+            logger.info(
+                "Using SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE from Terraform output."
+            )
+            return terraform_output
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    return namespace
 
 
 def _to_text(value) -> str:
@@ -123,9 +153,9 @@ def process_queue(queue_name: str, fully_qualified_namespace: str, credential: D
 
 
 def main() -> None:
-    fully_qualified_namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE")
+    fully_qualified_namespace = _resolve_service_bus_namespace()
     if not fully_qualified_namespace:
-        logger.error("Missing SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE in .env")
+        logger.error("Missing SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE in environment settings")
         return
 
     credential = DefaultAzureCredential()

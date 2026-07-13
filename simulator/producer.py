@@ -10,6 +10,7 @@ import os
 import json
 import logging
 import uuid
+import subprocess
 from azure.servicebus import ServiceBusMessage
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -20,14 +21,43 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("IntegrationProducer")
 
+
+def _resolve_service_bus_namespace() -> str:
+    namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE", "").strip()
+    if namespace and "your-namespace-here" not in namespace:
+        return namespace
+
+    try:
+        terraform_output = subprocess.check_output(
+            [
+                "terraform",
+                "-chdir=infra/terraform/azure",
+                "output",
+                "-raw",
+                "servicebus_namespace_fqdn",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        ).strip()
+        if terraform_output:
+            logger.info(
+                "Using SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE from Terraform output."
+            )
+            return terraform_output
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    return namespace
+
 def main() -> None:
     """
     Main execution script for the synthetic producer.
     Discovers target queues and dispatches batches of test anomalies.
     """
-    fully_qualified_namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE")
+    fully_qualified_namespace = _resolve_service_bus_namespace()
     if not fully_qualified_namespace:
-        logger.error("Missing SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE in .env")
+        logger.error("Missing SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE in environment settings")
         return
 
     credential = DefaultAzureCredential()
