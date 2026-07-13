@@ -868,6 +868,24 @@ def test_azure_foundry_engine_retries_with_max_completion_tokens(
     assert "max_completion_tokens" in second_call_kwargs
 
 
+@pytest.mark.usefixtures("temp_env")
+@patch("src.ai_client.ChatCompletionsClient")
+def test_azure_foundry_engine_normalizes_base_endpoint(mock_azure_client, monkeypatch):
+    """Proves base account endpoint is normalized to deployment-scoped endpoint."""
+    monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
+    monkeypatch.setenv(
+        "AZURE_FOUNDRY_ENDPOINT",
+        "https://foundry-dlq-msg-router-99.cognitiveservices.azure.com/",
+    )
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+
+    engine = AIEngineFactory.get_engine()
+    assert isinstance(engine, AzureFoundryEngine)
+    azure_engine = cast(AzureFoundryEngine, engine)
+
+    assert azure_engine.endpoint.endswith("/openai/deployments/gpt-5-mini")
+
+
 def test_fix_and_retry_fallback_escalation(mock_infrastructure):
     """Proves that if a safe default is missing from rules.json, it degrades gracefully to Escalate."""
     router = ActionRouter(

@@ -414,6 +414,16 @@ class AzureFoundryEngine(BaseAIEngine):
                 "Missing Azure Foundry configuration in environment settings"
             )
 
+        # The inference SDK expects a deployment-scoped endpoint for Azure OpenAI-style
+        # Cognitive resources. Accept either a base account endpoint or deployment URL.
+        base_endpoint = self.endpoint.rstrip("/")
+        if "/openai/deployments/" not in base_endpoint:
+            self.endpoint = (
+                f"{base_endpoint}/openai/deployments/{self.deployment_name}"
+            )
+        else:
+            self.endpoint = base_endpoint
+
         raw_temp = os.getenv("AZURE_FOUNDRY_TEMPERATURE")
         self.temperature = float(raw_temp) if raw_temp else None
 
