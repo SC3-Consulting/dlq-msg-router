@@ -55,10 +55,14 @@ if [[ -z "${AZURE_CLIENT_ID}" ]]; then
   exit 1
 fi
 
-if az login --identity --username "${AZURE_CLIENT_ID}" >/dev/null 2>&1; then
+if az login --identity --client-id "${AZURE_CLIENT_ID}" >/dev/null 2>&1; then
+  echo "==> Authenticated with managed identity ${AZURE_CLIENT_ID}."
+elif az login --identity --username "${AZURE_CLIENT_ID}" >/dev/null 2>&1; then
   echo "==> Authenticated with managed identity ${AZURE_CLIENT_ID}."
 else
   echo "Error: Managed identity login failed for client ID ${AZURE_CLIENT_ID}." >&2
+  echo "Hint: Run this command on the jumpbox for diagnostic output:" >&2
+  echo "      az login --identity --client-id ${AZURE_CLIENT_ID}" >&2
   exit 1
 fi
 
