@@ -37,6 +37,12 @@ resource "azurerm_role_assignment" "log_analytics_contributor" {
   principal_id         = azurerm_user_assigned_identity.agent_runtime.principal_id
 }
 
+resource "azurerm_role_assignment" "state_blob_data_contributor" {
+  scope                = var.scope_ids.state_backend
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.agent_runtime.principal_id
+}
+
 # Allow Jumpbox VM to read resources in the RG
 resource "azurerm_role_assignment" "agent_runtime_rg_reader" {
   scope                = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${var.resource_group_name}"

@@ -88,19 +88,13 @@ module "identity" {
     acr           = module.data_services.acr_id
     service_bus   = module.data_services.service_bus_id
     log_analytics = module.observability.log_analytics_workspace_id
+    state_backend = data.azurerm_storage_account.state_backend.id
   }
 }
 
 data "azurerm_storage_account" "state_backend" {
   name                = regex("storage_account_name\\s*=\\s*\"([^\"]+)\"", file("${path.module}/environments/${var.environment}/backend.hcl"))[0]
   resource_group_name = regex("resource_group_name\\s*=\\s*\"([^\"]+)\"", file("${path.module}/environments/${var.environment}/backend.hcl"))[0]
-}
-
-resource "azurerm_role_assignment" "jumpbox_state_blob_data_contributor" {
-  scope                = data.azurerm_storage_account.state_backend.id
-  role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = module.identity.agent_runtime_principal_id
-  depends_on           = [module.identity]
 }
 
 module "bastion_jumpbox" {
