@@ -50,19 +50,21 @@ fi
 
 # Guard against running outside the Jumpbox
 echo "==> Authenticating to ACR..."
-if [[ -n "${AZURE_CLIENT_ID}" ]] && az login --identity --username "${AZURE_CLIENT_ID}" >/dev/null 2>&1; then
+if [[ -z "${AZURE_CLIENT_ID}" ]]; then
+  echo "Error: Missing AZURE_CLIENT_ID for jumpbox managed identity login. Ensure ${JUMPBOX_AUTH_FILE} exists (rerun 05-configure-jumpbox.sh)." >&2
+  exit 1
+fi
+
+if az login --identity --username "${AZURE_CLIENT_ID}" >/dev/null 2>&1; then
   echo "==> Authenticated with managed identity ${AZURE_CLIENT_ID}."
-elif az login --identity >/dev/null 2>&1; then
-  echo "==> Authenticated with managed identity."
 else
-  echo "==> Managed identity login failed; falling back to existing local Azure credentials."
-  if ! az account show >/dev/null 2>&1; then
-    echo "Error: Azure authentication is not available. Run 'az login' or execute this script on the Azure Jumpbox." >&2
-    exit 1
-  fi
+  echo "Error: Managed identity login failed for client ID ${AZURE_CLIENT_ID}." >&2
+  exit 1
 fi
 
 cd "${TF_DIR}"
+export ARM_USE_MSI=true
+export ARM_CLIENT_ID="${AZURE_CLIENT_ID}"
 terraform init -reconfigure -backend-config="${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl"
 
 # Read the proper output variable after Azure authentication is established.
