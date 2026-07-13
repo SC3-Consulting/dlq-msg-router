@@ -126,6 +126,12 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt >/dev/null 2>&1
 
+echo "    [+] (Remote) Writing jumpbox managed-identity auth hint..."
+mkdir -p .azure
+cat <<INNER_EOF > .azure/jumpbox-auth.env
+AZURE_CLIENT_ID="${CLIENT_ID}"
+INNER_EOF
+
 echo "    [+] (Remote) Injecting Terraform backend metadata for image push and remote state access..."
 mkdir -p "infra/terraform/azure/environments/${ENVIRONMENT}"
 cat <<'INNER_EOF' > "infra/terraform/azure/environments/${ENVIRONMENT}/backend.hcl"

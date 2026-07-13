@@ -35,6 +35,8 @@ source .venv/bin/activate
 pip install -r requirements-dev.txt # install project dependencies into the venv
 
 sudo ./infra/scripts/install-terraform.bash # install Terraform
+
+cp .env.example .env # create a .env file and update values as required
 ```
 
 Minimum tool versions for this repository:

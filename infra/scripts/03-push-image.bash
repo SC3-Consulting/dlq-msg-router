@@ -20,6 +20,7 @@ done
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly TF_DIR="${ROOT_DIR}/infra/terraform/azure"
+readonly JUMPBOX_AUTH_FILE="${ROOT_DIR}/.azure/jumpbox-auth.env"
 
 # Strict validation of required configuration files
 if [[ ! -f "${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl" ]]; then
@@ -33,6 +34,13 @@ if [[ ! -f "${PLATFORM_VARS_FILE}" ]]; then
   exit 1
 fi
 
+if [[ -f "${JUMPBOX_AUTH_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${JUMPBOX_AUTH_FILE}"
+fi
+
+readonly AZURE_CLIENT_ID="${AZURE_CLIENT_ID:-}"
+
 # Dynamically extract the image tag from platform.tfvars
 readonly CONTAINER_IMAGE_TAG=$(grep -E '^[[:space:]]*container_image_tag' "${PLATFORM_VARS_FILE}" | awk -F'=' '{gsub(/ /,"",$2); gsub(/"/,"",$2); print $2}')
 if [[ -z "${CONTAINER_IMAGE_TAG:-}" ]]; then
@@ -42,7 +50,9 @@ fi
 
 # Guard against running outside the Jumpbox
 echo "==> Authenticating to ACR..."
-if az login --identity >/dev/null 2>&1; then
+if [[ -n "${AZURE_CLIENT_ID}" ]] && az login --identity --username "${AZURE_CLIENT_ID}" >/dev/null 2>&1; then
+  echo "==> Authenticated with managed identity ${AZURE_CLIENT_ID}."
+elif az login --identity >/dev/null 2>&1; then
   echo "==> Authenticated with managed identity."
 else
   echo "==> Managed identity login failed; falling back to existing local Azure credentials."
