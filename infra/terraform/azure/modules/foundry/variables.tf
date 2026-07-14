@@ -20,3 +20,9 @@ variable "enable_model_deployments" {
   type    = bool
   default = false
 }
+
+variable "foundry_ready_wait_duration" {
+  type        = string
+  description = "Delay after Cognitive Account creation before dependent resources are provisioned."
+  default     = "90s"
+}

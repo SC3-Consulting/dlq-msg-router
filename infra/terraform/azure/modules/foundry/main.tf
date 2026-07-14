@@ -33,6 +33,11 @@ resource "azurerm_cognitive_account" "foundry" {
   }
 }
 
+resource "time_sleep" "wait_for_foundry_ready" {
+  create_duration = var.foundry_ready_wait_duration
+  depends_on      = [azurerm_cognitive_account.foundry]
+}
+
 
 # Deploy the primary query model (e.g., gpt-4o-mini or gpt-5.1-chat)
 resource "azapi_resource" "model_deployment_query" {
@@ -41,6 +46,7 @@ resource "azapi_resource" "model_deployment_query" {
   name                      = var.query_model.name
   parent_id                 = azurerm_cognitive_account.foundry.id
   schema_validation_enabled = false
+  depends_on                = [time_sleep.wait_for_foundry_ready]
 
   body = {
     sku = {
