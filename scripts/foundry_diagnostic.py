@@ -103,12 +103,12 @@ def _run_raw_call(client_id: str, run_label: str) -> int:
     print("[diag] Running direct ChatCompletionsClient.complete...")
     engine = AzureFoundryEngine()
     messages = [
-        SystemMessage(content=f"You are an operations support engineer managing an Azure Service Bus environment.
+        SystemMessage(content=f"""You are an operations support engineer managing an Azure Service Bus environment.
 A message has fallen into the Dead Letter Queue (DLQ).
 Analyse the raw payload to deduce why it failed and recommend how to handle it.
 
 --- INSTRUCTIONS ---
-You must output YOUR ENTIRE RESPONSE as a single, valid JSON object. Do not include conversational text."),
+You must output YOUR ENTIRE RESPONSE as a single, valid JSON object. Do not include conversational text."""),
         UserMessage(
             content=engine._build_prompt(  # Intentional reuse of the app prompt.
                 client_id=client_id,
