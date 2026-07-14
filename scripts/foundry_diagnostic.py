@@ -213,22 +213,31 @@ You must output YOUR ENTIRE RESPONSE as a single, valid JSON object. Do not incl
 
     start = time.monotonic()
     temperature_removed = False
+    use_model_extras = False
     while True:
         try:
-            response = client.complete(max_tokens=engine.max_tokens, **kwargs)
-            break
-        except Exception as exc:
-            message = str(exc)
-            message_lower = message.lower()
-            print(f"[diag] Raw call with max_tokens failed: {message}")
-
-            if "max_completion_tokens" in message and "max_tokens" in message:
-                print("[diag] Retrying raw call with model_extras.max_completion_tokens...")
+            if use_model_extras:
                 response = client.complete(
                     model_extras={"max_completion_tokens": engine.max_tokens},
                     **kwargs,
                 )
-                break
+            else:
+                response = client.complete(max_tokens=engine.max_tokens, **kwargs)
+            break
+        except Exception as exc:
+            message = str(exc)
+            message_lower = message.lower()
+            call_mode = "model_extras.max_completion_tokens" if use_model_extras else "max_tokens"
+            print(f"[diag] Raw call with {call_mode} failed: {message}")
+
+            if (
+                not use_model_extras
+                and "max_completion_tokens" in message
+                and "max_tokens" in message
+            ):
+                use_model_extras = True
+                print("[diag] Retrying raw call with model_extras.max_completion_tokens...")
+                continue
 
             if (
                 "temperature" in kwargs
