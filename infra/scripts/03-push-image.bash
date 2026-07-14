@@ -9,13 +9,25 @@
 ##########################
 set -euo pipefail
 
-ENVIRONMENT="dev"
+ENVIRONMENT="${TARGET_ENV:-dev}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -e|--environment) ENVIRONMENT="$2"; shift 2 ;;
+    -e|--environment)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "Error: --environment requires a non-empty value (for example: dev, test, prod)." >&2
+        exit 1
+      fi
+      ENVIRONMENT="$2"
+      shift 2
+      ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
+
+if [[ -z "${ENVIRONMENT}" ]]; then
+  echo "Error: Target environment is empty. Set TARGET_ENV (for example: export TARGET_ENV=dev) or pass -e dev." >&2
+  exit 1
+fi
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -25,6 +37,7 @@ readonly JUMPBOX_AUTH_FILE="${ROOT_DIR}/.azure/jumpbox-auth.env"
 # Strict validation of required configuration files
 if [[ ! -f "${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl" ]]; then
   echo "Error: Missing backend configuration. Run phase 1 and 2 first, then rerun 05-configure-jumpbox.sh from your local workstation to sync generated Terraform files onto the jumpbox." >&2
+  echo "Hint: Resolved environment='${ENVIRONMENT}'. If you invoked '-e \"\${TARGET_ENV}\"', ensure TARGET_ENV is exported on this shell." >&2
   exit 1
 fi
 
