@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""Diagnose Azure Foundry behavior from a jumpbox or local shell.
+
+This script is intentionally narrow:
+- It uses the same AzureFoundryEngine call path as the running app.
+- It can also issue a direct ChatCompletionsClient call for comparison.
+- It prints elapsed time and failure details so transient rate limit or empty
+  response behaviour is easy to spot outside Container Apps.
+"""
+
+import argparse
+import json
+import logging
+import os
+import sys
+import time
+from typing import Any, Dict
+
+from azure.ai.inference import ChatCompletionsClient
+from azure.ai.inference.models import SystemMessage, UserMessage
+from azure.identity import DefaultAzureCredential
+
+from src.ai_client import AzureFoundryEngine
+
+
+LOGGER = logging.getLogger("foundry_diagnostic")
+
+
+def _build_probe_payload(run_label: str) -> str:
+    """Builds a synthetic payload for probing Azure Foundry.
+
+    Args:
+        run_label (str): A unique label to distinguish repeated probe runs.
+
+    Returns:
+        str: A JSON string representing the probe payload.
+    """
+    return json.dumps(
+        {
+            "transaction_amount": 50.0,
+            "trigger_unknown_fault": True,
+            "customer_email": "test.user@financial.com",
+            "customer_phone": "+1234567890",
+            "credit_card": "4111 1111 1111 1111",
+            "run_label": run_label,
+        }
+    )
+
+
+def _print_env_summary() -> None:
+    """Prints a summary of relevant environment variables for diagnostics."""
+    keys = [
+        "AI_PROVIDER",
+        "AZURE_FOUNDRY_ENDPOINT",
+        "AZURE_FOUNDRY_DEPLOYMENT_NAME",
+        "AZURE_FOUNDRY_MAX_TOKENS",
+        "AZURE_FOUNDRY_TRANSIENT_RETRIES",
+        "AZURE_CLIENT_ID",
+    ]
+    print("[diag] Environment summary")
+    for key in keys:
+        print(f"[diag]   {key}={os.getenv(key, '')}")
+
+
+def _verify_token() -> None:
+    """Verifies that the credential can acquire a Cognitive Services token."""
+    print("[diag] Verifying credential can acquire Cognitive Services token...")
+    start = time.monotonic()
+    credential = DefaultAzureCredential()
+    token = credential.get_token("https://cognitiveservices.azure.com/.default")
+    elapsed = time.monotonic() - start
+    print(
+        f"[diag] Token acquired in {elapsed:.2f}s; expires_on={token.expires_on}"
+    )
+
+
+def _run_engine_call(client_id: str, run_label: str) -> int:
+    """Runs a call to the AzureFoundryEngine with a synthetic payload.
+
+    Args:
+        client_id (str): The client ID for the Azure Foundry engine.
+        run_label (str): A unique label to distinguish repeated probe runs.
+
+    Returns:
+        int: The exit code of the operation.
+    """
+    print("[diag] Running AzureFoundryEngine.call_llm...")
+    engine = AzureFoundryEngine()
+    start = time.monotonic()
+    result = engine.call_llm(
+        client_id=client_id,
+        reason="SystemFault",
+        description="Unexpected null pointer",
+        payload=_build_probe_payload(run_label),
+    )
+    elapsed = time.monotonic() - start
+    print(f"[diag] Engine call succeeded in {elapsed:.2f}s")
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def _run_raw_call(client_id: str, run_label: str) -> int:
+    print("[diag] Running direct ChatCompletionsClient.complete...")
+    engine = AzureFoundryEngine()
+    messages = [
+        SystemMessage(content=f"You are an operations support engineer managing an Azure Service Bus environment.
+A message has fallen into the Dead Letter Queue (DLQ).
+Analyse the raw payload to deduce why it failed and recommend how to handle it.
+
+--- INSTRUCTIONS ---
+You must output YOUR ENTIRE RESPONSE as a single, valid JSON object. Do not include conversational text."),
+        UserMessage(
+            content=engine._build_prompt(  # Intentional reuse of the app prompt.
+                client_id=client_id,
+                reason="SystemFault",
+                description="Unexpected null pointer",
+                payload=_build_probe_payload(run_label),
+                is_truncated=False,
+            )
+        ),
+    ]
+
+    client = ChatCompletionsClient(
+        endpoint=engine.endpoint,
+        credential=DefaultAzureCredential(),
+        credential_scopes=["https://cognitiveservices.azure.com/.default"],
+    )
+
+    kwargs: Dict[str, Any] = {
+        "messages": messages,
+        "model": engine.deployment_name,
+        "response_format": "json_object",
+    }
+    if engine.temperature is not None:
+        kwargs["temperature"] = engine.temperature
+
+    start = time.monotonic()
+    try:
+        response = client.complete(max_tokens=engine.max_tokens, **kwargs)
+    except Exception as exc:
+        message = str(exc)
+        print(f"[diag] Raw call with max_tokens failed: {message}")
+        if "max_completion_tokens" not in message or "max_tokens" not in message:
+            raise
+        print("[diag] Retrying raw call with model_extras.max_completion_tokens...")
+        response = client.complete(
+            model_extras={"max_completion_tokens": engine.max_tokens},
+            **kwargs,
+        )
+
+    elapsed = time.monotonic() - start
+    print(f"[diag] Raw call returned in {elapsed:.2f}s")
+    if not response.choices:
+        print("[diag] No choices returned.")
+        return 2
+
+    content = response.choices[0].message.content
+    print("[diag] Raw model content:")
+    print(content if content else "<empty>")
+    return 0
+
+
+def main() -> int:
+    """Main entry point for the Azure Foundry diagnostic script."""
+    parser = argparse.ArgumentParser(
+        description="Probe Azure Foundry from jumpbox or shell using the same SDK path as the app."
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["engine", "raw", "both"],
+        default="both",
+        help="Which probe path to run.",
+    )
+    parser.add_argument(
+        "--client-id",
+        default="Omega_Corp_diag",
+        help="Client identifier label used in the probe prompt.",
+    )
+    parser.add_argument(
+        "--run-label",
+        default=f"diag-{int(time.time())}",
+        help="Unique label to distinguish repeated probe runs.",
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s",
+    )
+
+    if os.getenv("AI_PROVIDER", "").upper() != "AZURE_FOUNDRY":
+        os.environ["AI_PROVIDER"] = "AZURE_FOUNDRY"
+
+    _print_env_summary()
+
+    try:
+        _verify_token()
+
+        if args.mode in {"engine", "both"}:
+            _run_engine_call(args.client_id, args.run_label)
+
+        if args.mode in {"raw", "both"}:
+            _run_raw_call(args.client_id, args.run_label)
+
+        return 0
+    except Exception as exc:
+        print(f"[diag] FAILED: {type(exc).__name__}: {exc}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

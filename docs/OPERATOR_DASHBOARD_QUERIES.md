@@ -106,7 +106,7 @@ let lookback = 24h;
 ContainerAppConsoleLogs_CL
 | where TimeGenerated >= ago(lookback)
 | where ContainerAppName_s == appName
-| where Log_s has "failure_"
+| where Log_s has "failure"
 | summarize lines = count() by bin(TimeGenerated, 5m)
 | order by TimeGenerated asc
 ```

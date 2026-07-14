@@ -114,18 +114,6 @@ def main() -> None:
             "desc": "5. Business Rule Violation (Blacklisted Client)"
         },
         {
-            "payload": {
-                "transaction_amount": 50.00, 
-                "trigger_unknown_fault": True,
-                "customer_email": "test.user@financial.com",
-                "customer_phone": "+1234567890",
-                "credit_card": "4111 1111 1111 1111",
-                "run_token": run_token
-            },
-            "properties": {"client_id": f"Omega_Corp_{run_token}", "message_type": "LegacySync", "Resubmit-Count": 0},
-            "desc": "6. Unknown System Fault (AI Fallback + PII Scrubber)"
-        },
-        {
             "payload": {"transaction_amount": 10.00, "mock_infra_004": True, "run_token": run_token},
             "properties": {"client_id": f"Kappa_Corp_{run_token}", "message_type": "PaymentRequest", "Resubmit-Count": 0},
             "desc": "8. Mock Capacity Exceeded"
@@ -140,6 +128,18 @@ def main() -> None:
             "payload": {"plan": "premium", "trigger_string_inject": True, "run_token": run_token}, 
             "properties": {"client_id": f"Theta_Corp_{run_token}", "message_type": "AccountSync", "Resubmit-Count": 0},
             "desc": "10. Dynamic Safe Default Test (String Injection)"
+        },
+        {
+            "payload": {
+                "transaction_amount": 50.00,
+                "trigger_unknown_fault": True,
+                "customer_email": "test.user@financial.com",
+                "customer_phone": "+1234567890",
+                "credit_card": "4111 1111 1111 1111",
+                "run_token": run_token,
+            },
+            "properties": {"client_id": f"Omega_Corp_{run_token}", "message_type": "LegacySync", "Resubmit-Count": 0},
+            "desc": "11. Unknown System Fault (AI Fallback + PII Scrubber)"
         }
     ]
 
