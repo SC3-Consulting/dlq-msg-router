@@ -12,6 +12,8 @@ import argparse
 import json
 import logging
 import os
+import re
+import subprocess
 import sys
 import time
 from typing import Any, Dict
@@ -60,6 +62,68 @@ def _print_env_summary() -> None:
     print("[diag] Environment summary")
     for key in keys:
         print(f"[diag]   {key}={os.getenv(key, '')}")
+
+
+def _extract_deployment_name(endpoint: str) -> str:
+    """Extracts deployment name from a deployment-scoped Foundry endpoint."""
+    if not endpoint:
+        return ""
+    match = re.search(r"/openai/deployments/([^/?]+)", endpoint)
+    return match.group(1) if match else ""
+
+
+def _resolve_foundry_env() -> None:
+    """Resolves missing Foundry env vars from endpoint and Terraform outputs.
+
+    Priority:
+    1) Existing env vars.
+    2) Parse deployment name from AZURE_FOUNDRY_ENDPOINT if deployment-scoped.
+    3) Terraform output `foundry_endpoint` as a fallback source.
+    """
+    endpoint = os.getenv("AZURE_FOUNDRY_ENDPOINT", "").strip()
+    deployment_name = os.getenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "").strip()
+
+    if deployment_name:
+        return
+
+    parsed_name = _extract_deployment_name(endpoint)
+    if parsed_name:
+        os.environ["AZURE_FOUNDRY_DEPLOYMENT_NAME"] = parsed_name
+        print(
+            "[diag] Resolved AZURE_FOUNDRY_DEPLOYMENT_NAME from AZURE_FOUNDRY_ENDPOINT."
+        )
+        return
+
+    try:
+        tf_output = subprocess.check_output(
+            [
+                "terraform",
+                "-chdir=infra/terraform/azure",
+                "output",
+                "-raw",
+                "foundry_endpoint",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        tf_output = ""
+
+    if not tf_output:
+        return
+
+    if not endpoint:
+        os.environ["AZURE_FOUNDRY_ENDPOINT"] = tf_output
+        endpoint = tf_output
+        print("[diag] Resolved AZURE_FOUNDRY_ENDPOINT from Terraform output.")
+
+    parsed_name = _extract_deployment_name(tf_output) or _extract_deployment_name(endpoint)
+    if parsed_name:
+        os.environ["AZURE_FOUNDRY_DEPLOYMENT_NAME"] = parsed_name
+        print(
+            "[diag] Resolved AZURE_FOUNDRY_DEPLOYMENT_NAME from Terraform output."
+        )
 
 
 def _verify_token() -> None:
@@ -191,6 +255,7 @@ def main() -> int:
     if os.getenv("AI_PROVIDER", "").upper() != "AZURE_FOUNDRY":
         os.environ["AI_PROVIDER"] = "AZURE_FOUNDRY"
 
+    _resolve_foundry_env()
     _print_env_summary()
 
     try:
