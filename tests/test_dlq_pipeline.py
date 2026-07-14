@@ -865,7 +865,7 @@ def test_azure_foundry_engine_retries_with_max_completion_tokens(
     second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
     assert "max_tokens" in first_call_kwargs
     assert "max_completion_tokens" not in first_call_kwargs
-    assert "max_completion_tokens" in second_call_kwargs
+    assert second_call_kwargs["model_extras"] == {"max_completion_tokens": 300}
 
 
 @pytest.mark.usefixtures("temp_env")

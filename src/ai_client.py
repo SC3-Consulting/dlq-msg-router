@@ -485,7 +485,8 @@ class AzureFoundryEngine(BaseAIEngine):
             return self._salvage_json(raw_text)
         except Exception as e:
             # Some models (for example gpt-5-mini) require max_completion_tokens
-            # instead of max_tokens. Retry once with the compatible parameter.
+            # instead of max_tokens. Retry once with the compatible parameter via
+            # model_extras so the SDK forwards it to the service body.
             message = str(e)
             if "max_completion_tokens" in message and "max_tokens" in message:
                 self.logger.warning(
@@ -494,7 +495,7 @@ class AzureFoundryEngine(BaseAIEngine):
                 response = self.client.complete(
                     messages=messages,
                     model=self.deployment_name,
-                    max_completion_tokens=self.max_tokens,
+                    model_extras={"max_completion_tokens": self.max_tokens},
                     **kwargs,
                 )
                 raw_text = response.choices[0].message.content

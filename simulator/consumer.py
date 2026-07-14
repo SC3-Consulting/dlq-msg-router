@@ -24,6 +24,11 @@ logger = logging.getLogger("IntegrationConsumer")
 
 
 def _resolve_service_bus_namespace() -> str:
+    """Resolves Service Bus namespace from env first, then Terraform output fallback.
+
+    Returns:
+        str: Fully qualified Service Bus namespace, or empty string when unavailable.
+    """
     namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE", "").strip()
     if namespace and "your-namespace-here" not in namespace:
         return namespace
@@ -53,12 +58,28 @@ def _resolve_service_bus_namespace() -> str:
 
 
 def _to_text(value) -> str:
+    """Converts a value to a UTF-8 string, handling bytes and other types.
+
+    Args:
+        value: The value to convert.
+
+    Returns:
+        str: The UTF-8 string representation of the value.
+    """
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return str(value)
 
 
 def _message_body_to_text(message) -> str:
+    """Converts the body of a Service Bus message to a UTF-8 string.
+
+    Args:
+        message: The Service Bus message.
+
+    Returns:
+        str: The UTF-8 string representation of the message body.
+    """
     try:
         body = message.body
         if isinstance(body, (bytes, bytearray)):
@@ -75,6 +96,13 @@ def _message_body_to_text(message) -> str:
         return ""
 
 def process_queue(queue_name: str, fully_qualified_namespace: str, credential: DefaultAzureCredential) -> None:
+    """Processes messages from a Service Bus queue.
+
+    Args:
+        queue_name: The name of the queue to process.
+        fully_qualified_namespace: The fully qualified Service Bus namespace.
+        credential: The Azure credential to use for authentication.
+    """
     if shutdown_event.is_set():
         return
 
@@ -153,6 +181,7 @@ def process_queue(queue_name: str, fully_qualified_namespace: str, credential: D
 
 
 def main() -> None:
+    """Main function to start the consumer threads for all target queues."""
     fully_qualified_namespace = _resolve_service_bus_namespace()
     if not fully_qualified_namespace:
         logger.error("Missing SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE in environment settings")

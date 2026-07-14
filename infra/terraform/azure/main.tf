@@ -74,6 +74,7 @@ module "private_endpoints" {
   private_endpoint_subnet_id = module.network.private_endpoint_subnet_id
   private_dns_zone_ids       = module.dns.private_dns_zone_ids
   foundry_account_id         = module.foundry.foundry_account_id
+  foundry_account_name       = module.foundry.foundry_account_name
   acr_id                     = module.data_services.acr_id
   service_bus_id             = module.data_services.service_bus_id
 }
