@@ -7,6 +7,7 @@ resource "random_string" "foundry_suffix" {
 
   keepers = {
     environment = var.suffix
+    seed        = var.foundry_name_seed
   }
 }
 

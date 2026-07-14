@@ -12,3 +12,9 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "servicebus_name_seed" {
+  type        = string
+  description = "Seed used in random name keepers to allow controlled Service Bus name rotation."
+  default     = "v1"
+}

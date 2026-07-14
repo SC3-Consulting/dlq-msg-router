@@ -21,6 +21,12 @@ variable "enable_model_deployments" {
   default = false
 }
 
+variable "foundry_name_seed" {
+  type        = string
+  description = "Seed used in random name keepers to allow controlled Foundry name rotation."
+  default     = "v2"
+}
+
 variable "foundry_ready_wait_duration" {
   type        = string
   description = "Delay after Cognitive Account creation before dependent resources are provisioned."

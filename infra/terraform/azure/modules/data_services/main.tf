@@ -7,8 +7,29 @@ resource "azurerm_container_registry" "this" {
   public_network_access_enabled = false
 }
 
+resource "random_string" "servicebus_suffix" {
+  length  = 6
+  upper   = false
+  lower   = true
+  numeric = true
+  special = false
+
+  keepers = {
+    environment = var.suffix
+    seed        = var.servicebus_name_seed
+  }
+}
+
+locals {
+  servicebus_name = substr(
+    lower("sb-dlq-msg-router-${var.suffix}-${random_string.servicebus_suffix.result}"),
+    0,
+    50,
+  )
+}
+
 resource "azurerm_servicebus_namespace" "this" {
-  name                          = "sb-dlq-msg-router-99"
+  name                          = local.servicebus_name
   location                      = var.location
   resource_group_name           = var.resource_group_name
   sku                           = "Premium"
