@@ -834,6 +834,7 @@ def test_azure_foundry_engine_retries_with_max_completion_tokens(
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
     monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
     monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_MAX_TOKENS", "600")
 
     engine = AIEngineFactory.get_engine()
     assert isinstance(engine, AzureFoundryEngine)
@@ -866,7 +867,7 @@ def test_azure_foundry_engine_retries_with_max_completion_tokens(
     assert "max_tokens" in first_call_kwargs
     assert "max_completion_tokens" not in first_call_kwargs
     assert first_call_kwargs["response_format"] == "json_object"
-    assert second_call_kwargs["model_extras"] == {"max_completion_tokens": 300}
+    assert second_call_kwargs["model_extras"] == {"max_completion_tokens": 600}
 
 
 @pytest.mark.usefixtures("temp_env")
@@ -1026,6 +1027,53 @@ def test_azure_foundry_engine_retries_without_response_format_on_empty_content(
     second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
     assert first_call_kwargs["response_format"] == "json_object"
     assert "response_format" not in second_call_kwargs
+
+
+@pytest.mark.usefixtures("temp_env")
+@patch("src.ai_client.ChatCompletionsClient")
+def test_azure_foundry_engine_retries_with_higher_tokens_on_reasoning_exhaustion(
+    mock_azure_client, monkeypatch
+):
+    """Proves token budget is boosted when reasoning consumes the entire completion budget."""
+    monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
+    monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_MAX_TOKENS", "600")
+    monkeypatch.setenv("AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS", "1200")
+
+    engine = AIEngineFactory.get_engine()
+    assert isinstance(engine, AzureFoundryEngine)
+    azure_engine = cast(AzureFoundryEngine, engine)
+
+    empty_choice = MagicMock()
+    empty_choice.message.content = ""
+    empty_choice.finish_reason = "length"
+    empty_usage = MagicMock()
+    empty_usage.completion_tokens = 600
+    empty_usage.completion_tokens_details = {"reasoning_tokens": 600}
+    empty_response = MagicMock()
+    empty_response.choices = [empty_choice]
+    empty_response.usage = empty_usage
+
+    ok_choice = MagicMock()
+    ok_choice.message.content = (
+        '{"suggested_classification": "Azure_Tested", "suggested_action": "drop"}'
+    )
+    ok_response = MagicMock()
+    ok_response.choices = [ok_choice]
+
+    cast(Any, azure_engine.client).complete.side_effect = [empty_response, ok_response]
+
+    result = azure_engine.call_llm(
+        "Client_1", "ValidationFailed", "Missing email", '{"account": "123"}'
+    )
+
+    assert result["suggested_action"] == "drop"
+    assert cast(Any, azure_engine.client).complete.call_count == 2
+    first_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[0].kwargs
+    second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    assert first_call_kwargs["max_tokens"] == 600
+    assert second_call_kwargs["model_extras"] == {"max_completion_tokens": 1200}
 
 
 @pytest.mark.usefixtures("temp_env")

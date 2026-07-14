@@ -430,9 +430,9 @@ class AzureFoundryEngine(BaseAIEngine):
 
         # Read the explicit real-time cost circuit breaker from environment configuration
         try:
-            self.max_tokens = int(os.getenv("AZURE_FOUNDRY_MAX_TOKENS", "300"))
+            self.max_tokens = int(os.getenv("AZURE_FOUNDRY_MAX_TOKENS", "600"))
         except ValueError:
-            self.max_tokens = 300
+            self.max_tokens = 600
 
         # Correct SDK Auth Pattern: Pass TokenCredential directly
         # Explicitly declare the Cognitive Services audience for local testing
@@ -478,6 +478,11 @@ class AzureFoundryEngine(BaseAIEngine):
         use_model_extras = False
         force_json_response = True
         transient_attempt = 0
+        current_max_tokens = self.max_tokens
+        empty_response_boost_applied = False
+        boosted_max_tokens = int(
+            os.getenv("AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS", "1200")
+        )
         max_transient_attempts = int(
             os.getenv("AZURE_FOUNDRY_TRANSIENT_RETRIES", "2")
         )
@@ -493,11 +498,11 @@ class AzureFoundryEngine(BaseAIEngine):
                     request_kwargs["response_format"] = "json_object"
                 if use_model_extras:
                     request_kwargs["model_extras"] = {
-                        "max_completion_tokens": self.max_tokens
+                        "max_completion_tokens": current_max_tokens
                     }
                 else:
                     # Explicit real-time cost circuit breaker passed safely.
-                    request_kwargs["max_tokens"] = self.max_tokens
+                    request_kwargs["max_tokens"] = current_max_tokens
 
                 response = self.client.complete(**request_kwargs)
 
@@ -506,6 +511,20 @@ class AzureFoundryEngine(BaseAIEngine):
 
                 raw_text = self._extract_response_text(response.choices[0].message.content)
                 if not raw_text:
+                    if (
+                        not empty_response_boost_applied
+                        and self._is_reasoning_token_exhaustion(
+                            response=response,
+                            current_max_tokens=current_max_tokens,
+                        )
+                    ):
+                        empty_response_boost_applied = True
+                        use_model_extras = True
+                        current_max_tokens = max(current_max_tokens, boosted_max_tokens)
+                        self.logger.warning(
+                            "Azure Foundry consumed completion budget in reasoning with empty content; retrying with higher max_completion_tokens."
+                        )
+                        continue
                     raise ValueError("Empty LLM response after unwrapping.")
 
                 return self._salvage_json(raw_text)
@@ -573,6 +592,42 @@ class AzureFoundryEngine(BaseAIEngine):
 
                 self.logger.error(f"Azure Foundry API failure: {e}")
                 raise
+
+    @staticmethod
+    def _is_reasoning_token_exhaustion(response: Any, current_max_tokens: int) -> bool:
+        """Returns True when response appears to hit reasoning token ceiling.
+
+        Signal pattern observed in diagnostics:
+        - finish_reason == "length"
+        - content is empty
+        - completion tokens are fully consumed by reasoning tokens
+        """
+        try:
+            choice = response.choices[0]
+            finish_reason = getattr(choice, "finish_reason", None)
+            usage = getattr(response, "usage", None)
+            if finish_reason != "length" or not usage:
+                return False
+
+            completion_tokens = getattr(usage, "completion_tokens", None)
+            completion_details = getattr(usage, "completion_tokens_details", None)
+
+            # Support both model objects and dictionary-style payloads.
+            reasoning_tokens = None
+            if isinstance(completion_details, dict):
+                reasoning_tokens = completion_details.get("reasoning_tokens")
+            elif completion_details is not None:
+                reasoning_tokens = getattr(completion_details, "reasoning_tokens", None)
+
+            if completion_tokens is None or reasoning_tokens is None:
+                return False
+
+            return (
+                int(completion_tokens) >= int(current_max_tokens)
+                and int(reasoning_tokens) >= int(current_max_tokens)
+            )
+        except Exception:
+            return False
 
     @staticmethod
     def _extract_response_text(content: Any) -> str:

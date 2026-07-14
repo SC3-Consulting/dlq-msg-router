@@ -29,7 +29,8 @@ app_env_vars = {
   AI_PROVIDER                   = "AZURE_FOUNDRY"
   AZURE_FOUNDRY_ENDPOINT        = "https://foundry-dlq-msg-router-test.cognitiveservices.azure.com/openai/deployments/gpt-4o-mini"
   AZURE_FOUNDRY_DEPLOYMENT_NAME = "gpt-4o-mini"
-  AZURE_FOUNDRY_MAX_TOKENS      = "300"
+  AZURE_FOUNDRY_MAX_TOKENS      = "600"
+  AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS = "1200"
   RULES_FILE_PATH               = "data/rules.json"
   AGENT_CYCLE_SLEEP_SECONDS     = "60"
 }
