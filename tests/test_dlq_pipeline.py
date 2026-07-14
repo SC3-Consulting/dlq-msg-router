@@ -944,7 +944,7 @@ def test_azure_foundry_engine_retries_on_empty_response(
 
     assert result["suggested_action"] == "escalate"
     assert cast(Any, azure_engine.client).complete.call_count == 2
-    mock_sleep.assert_called_once()
+    mock_sleep.assert_not_called()
 
 
 @pytest.mark.usefixtures("temp_env")
@@ -986,6 +986,46 @@ def test_azure_foundry_engine_retries_without_temperature_on_unsupported_value(
     second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
     assert first_call_kwargs["temperature"] == 0.1
     assert "temperature" not in second_call_kwargs
+
+
+@pytest.mark.usefixtures("temp_env")
+@patch("src.ai_client.ChatCompletionsClient")
+def test_azure_foundry_engine_retries_without_response_format_on_empty_content(
+    mock_azure_client, monkeypatch
+):
+    """Proves fallback when json_object mode returns empty content repeatedly."""
+    monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
+    monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+
+    engine = AIEngineFactory.get_engine()
+    assert isinstance(engine, AzureFoundryEngine)
+    azure_engine = cast(AzureFoundryEngine, engine)
+
+    empty_choice = MagicMock()
+    empty_choice.message.content = ""
+    empty_response = MagicMock()
+    empty_response.choices = [empty_choice]
+
+    ok_choice = MagicMock()
+    ok_choice.message.content = (
+        '{"suggested_classification": "Azure_Tested", "suggested_action": "drop"}'
+    )
+    ok_response = MagicMock()
+    ok_response.choices = [ok_choice]
+
+    cast(Any, azure_engine.client).complete.side_effect = [empty_response, ok_response]
+
+    result = azure_engine.call_llm(
+        "Client_1", "ValidationFailed", "Missing email", '{"account": "123"}'
+    )
+
+    assert result["suggested_action"] == "drop"
+    assert cast(Any, azure_engine.client).complete.call_count == 2
+    first_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[0].kwargs
+    second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    assert first_call_kwargs["response_format"] == "json_object"
+    assert "response_format" not in second_call_kwargs
 
 
 @pytest.mark.usefixtures("temp_env")

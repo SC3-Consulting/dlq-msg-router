@@ -476,6 +476,7 @@ class AzureFoundryEngine(BaseAIEngine):
         )
 
         use_model_extras = False
+        force_json_response = True
         transient_attempt = 0
         max_transient_attempts = int(
             os.getenv("AZURE_FOUNDRY_TRANSIENT_RETRIES", "2")
@@ -486,9 +487,10 @@ class AzureFoundryEngine(BaseAIEngine):
                 request_kwargs: Dict[str, Any] = {
                     "messages": messages,
                     "model": self.deployment_name,
-                    "response_format": "json_object",
                     **kwargs,
                 }
+                if force_json_response:
+                    request_kwargs["response_format"] = "json_object"
                 if use_model_extras:
                     request_kwargs["model_extras"] = {
                         "max_completion_tokens": self.max_tokens
@@ -502,7 +504,7 @@ class AzureFoundryEngine(BaseAIEngine):
                 if not response.choices:
                     raise ValueError("Empty LLM response: no choices returned.")
 
-                raw_text = response.choices[0].message.content
+                raw_text = self._extract_response_text(response.choices[0].message.content)
                 if not raw_text:
                     raise ValueError("Empty LLM response after unwrapping.")
 
@@ -538,6 +540,18 @@ class AzureFoundryEngine(BaseAIEngine):
                     kwargs.pop("temperature", None)
                     continue
 
+                # Some responses return HTTP 200 with empty content when forcing
+                # json_object. Retry once without forcing response_format.
+                if (
+                    force_json_response
+                    and "empty llm response" in message_lower
+                ):
+                    self.logger.warning(
+                        "Azure Foundry returned empty content with json_object; retrying without forced response_format."
+                    )
+                    force_json_response = False
+                    continue
+
                 is_rate_limited = (
                     "rate_limit_exceeded" in message_lower
                     or "too many requests" in message_lower
@@ -559,6 +573,33 @@ class AzureFoundryEngine(BaseAIEngine):
 
                 self.logger.error(f"Azure Foundry API failure: {e}")
                 raise
+
+    @staticmethod
+    def _extract_response_text(content: Any) -> str:
+        """Normalises SDK response content to plain text.
+
+        Azure AI Inference may return a string or a list of content parts.
+        """
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                text_val = getattr(item, "text", None)
+                if isinstance(text_val, str):
+                    parts.append(text_val)
+                    continue
+                if isinstance(item, dict):
+                    dict_text = item.get("text")
+                    if isinstance(dict_text, str):
+                        parts.append(dict_text)
+            return "\n".join(p.strip() for p in parts if p and p.strip())
+        return str(content).strip()
 
 
 class AIEngineFactory:

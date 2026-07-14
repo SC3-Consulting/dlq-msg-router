@@ -163,7 +163,19 @@ def _run_engine_call(client_id: str, run_label: str) -> int:
     return 0
 
 
-def _run_raw_call(client_id: str, run_label: str) -> int:
+def _describe_content_shape(content: Any) -> str:
+    """Returns a compact description of the response content shape."""
+    if content is None:
+        return "None"
+    if isinstance(content, str):
+        return f"str(len={len(content)})"
+    if isinstance(content, list):
+        part_types = [type(item).__name__ for item in content]
+        return f"list(len={len(content)}, item_types={part_types})"
+    return type(content).__name__
+
+
+def _run_raw_call(client_id: str, run_label: str, force_json_object: str) -> int:
     print("[diag] Running direct ChatCompletionsClient.complete...")
     engine = AzureFoundryEngine()
     messages = [
@@ -193,32 +205,53 @@ You must output YOUR ENTIRE RESPONSE as a single, valid JSON object. Do not incl
     kwargs: Dict[str, Any] = {
         "messages": messages,
         "model": engine.deployment_name,
-        "response_format": "json_object",
     }
+    if force_json_object == "on":
+        kwargs["response_format"] = "json_object"
     if engine.temperature is not None:
         kwargs["temperature"] = engine.temperature
 
     start = time.monotonic()
-    try:
-        response = client.complete(max_tokens=engine.max_tokens, **kwargs)
-    except Exception as exc:
-        message = str(exc)
-        print(f"[diag] Raw call with max_tokens failed: {message}")
-        if "max_completion_tokens" not in message or "max_tokens" not in message:
+    temperature_removed = False
+    while True:
+        try:
+            response = client.complete(max_tokens=engine.max_tokens, **kwargs)
+            break
+        except Exception as exc:
+            message = str(exc)
+            message_lower = message.lower()
+            print(f"[diag] Raw call with max_tokens failed: {message}")
+
+            if "max_completion_tokens" in message and "max_tokens" in message:
+                print("[diag] Retrying raw call with model_extras.max_completion_tokens...")
+                response = client.complete(
+                    model_extras={"max_completion_tokens": engine.max_tokens},
+                    **kwargs,
+                )
+                break
+
+            if (
+                "temperature" in kwargs
+                and "unsupported_value" in message_lower
+                and "temperature" in message_lower
+            ):
+                kwargs.pop("temperature", None)
+                temperature_removed = True
+                print("[diag] Retrying raw call without explicit temperature...")
+                continue
+
             raise
-        print("[diag] Retrying raw call with model_extras.max_completion_tokens...")
-        response = client.complete(
-            model_extras={"max_completion_tokens": engine.max_tokens},
-            **kwargs,
-        )
 
     elapsed = time.monotonic() - start
     print(f"[diag] Raw call returned in {elapsed:.2f}s")
+    if temperature_removed:
+        print("[diag] Temperature fallback path was exercised.")
     if not response.choices:
         print("[diag] No choices returned.")
         return 2
 
     content = response.choices[0].message.content
+    print(f"[diag] Raw content shape: {_describe_content_shape(content)}")
     print("[diag] Raw model content:")
     print(content if content else "<empty>")
     return 0
@@ -245,6 +278,12 @@ def main() -> int:
         default=f"diag-{int(time.time())}",
         help="Unique label to distinguish repeated probe runs.",
     )
+    parser.add_argument(
+        "--raw-force-json-object",
+        choices=["on", "off"],
+        default="on",
+        help="For --mode raw/both, force response_format=json_object or disable it.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -265,7 +304,11 @@ def main() -> int:
             _run_engine_call(args.client_id, args.run_label)
 
         if args.mode in {"raw", "both"}:
-            _run_raw_call(args.client_id, args.run_label)
+            _run_raw_call(
+                args.client_id,
+                args.run_label,
+                args.raw_force_json_object,
+            )
 
         return 0
     except Exception as exc:
