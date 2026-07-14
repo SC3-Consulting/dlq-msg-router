@@ -1,5 +1,27 @@
+resource "random_string" "acr_suffix" {
+  length  = 6
+  upper   = false
+  lower   = true
+  numeric = true
+  special = false
+
+  keepers = {
+    environment = var.suffix
+    seed        = var.acr_name_seed
+  }
+}
+
+locals {
+  default_acr_name = substr(
+    lower("acrdlqmsgrouter${var.suffix}${random_string.acr_suffix.result}"),
+    0,
+    50,
+  )
+  acr_name = trimspace(var.acr_name_override) != "" ? lower(trimspace(var.acr_name_override)) : local.default_acr_name
+}
+
 resource "azurerm_container_registry" "this" {
-  name                          = "acrmsgrouter99"
+  name                          = local.acr_name
   resource_group_name           = var.resource_group_name
   location                      = var.location
   sku                           = "Premium"

@@ -24,9 +24,6 @@ locals {
     }
   }
 
-  foundry_private_ips = compact([
-    azurerm_private_endpoint.this["foundry_account"].private_service_connection[0].private_ip_address
-  ])
 }
 
 resource "azurerm_private_endpoint" "this" {
@@ -47,20 +44,4 @@ resource "azurerm_private_endpoint" "this" {
     name                 = "zg-${replace(each.key, "_", "-")}"
     private_dns_zone_ids = [for zone_name in each.value.zone_names : var.private_dns_zone_ids[zone_name]]
   }
-}
-
-resource "azurerm_private_dns_a_record" "foundry_cognitiveservices" {
-  name                = var.foundry_account_name
-  zone_name           = "privatelink.cognitiveservices.azure.com"
-  resource_group_name = var.resource_group_name
-  ttl                 = 300
-  records             = local.foundry_private_ips
-}
-
-resource "azurerm_private_dns_a_record" "foundry_openai" {
-  name                = var.foundry_account_name
-  zone_name           = "privatelink.openai.azure.com"
-  resource_group_name = var.resource_group_name
-  ttl                 = 300
-  records             = local.foundry_private_ips
 }
