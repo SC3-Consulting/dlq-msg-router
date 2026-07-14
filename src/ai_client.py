@@ -525,6 +525,19 @@ class AzureFoundryEngine(BaseAIEngine):
                     use_model_extras = True
                     continue
 
+                # Some Foundry model deployments only allow the default
+                # temperature value and reject explicit custom values.
+                if (
+                    "temperature" in kwargs
+                    and "unsupported_value" in message_lower
+                    and "temperature" in message_lower
+                ):
+                    self.logger.warning(
+                        "Azure Foundry model rejected explicit temperature; retrying with model default temperature."
+                    )
+                    kwargs.pop("temperature", None)
+                    continue
+
                 is_rate_limited = (
                     "rate_limit_exceeded" in message_lower
                     or "too many requests" in message_lower

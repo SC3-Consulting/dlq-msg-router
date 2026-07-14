@@ -949,6 +949,47 @@ def test_azure_foundry_engine_retries_on_empty_response(
 
 @pytest.mark.usefixtures("temp_env")
 @patch("src.ai_client.ChatCompletionsClient")
+def test_azure_foundry_engine_retries_without_temperature_on_unsupported_value(
+    mock_azure_client, monkeypatch
+):
+    """Proves fallback to model default temperature when explicit value is rejected."""
+    monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
+    monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_TEMPERATURE", "0.1")
+
+    engine = AIEngineFactory.get_engine()
+    assert isinstance(engine, AzureFoundryEngine)
+    azure_engine = cast(AzureFoundryEngine, engine)
+
+    mock_choice = MagicMock()
+    mock_choice.message.content = (
+        '{"suggested_classification": "Azure_Tested", "suggested_action": "drop"}'
+    )
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+
+    cast(Any, azure_engine.client).complete.side_effect = [
+        Exception(
+            "(unsupported_value) Unsupported value: 'temperature' does not support 0.1 with this model. Only the default (1) value is supported."
+        ),
+        mock_response,
+    ]
+
+    result = azure_engine.call_llm(
+        "Client_1", "ValidationFailed", "Missing email", '{"account": "123"}'
+    )
+
+    assert result["suggested_action"] == "drop"
+    assert cast(Any, azure_engine.client).complete.call_count == 2
+    first_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[0].kwargs
+    second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    assert first_call_kwargs["temperature"] == 0.1
+    assert "temperature" not in second_call_kwargs
+
+
+@pytest.mark.usefixtures("temp_env")
+@patch("src.ai_client.ChatCompletionsClient")
 def test_azure_foundry_engine_normalizes_base_endpoint(mock_azure_client, monkeypatch):
     """Proves base account endpoint is normalized to deployment-scoped endpoint."""
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
