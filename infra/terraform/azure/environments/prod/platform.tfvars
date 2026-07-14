@@ -31,6 +31,9 @@ app_env_vars = {
   AZURE_FOUNDRY_DEPLOYMENT_NAME = "gpt-4o-mini"
   AZURE_FOUNDRY_MAX_TOKENS      = "1200"
   AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS = "2400"
+  AI_RETRY_MAX_ATTEMPTS         = "5"
+  AI_BACKOFF_BASE_SECONDS       = "1.5"
+  AI_BACKOFF_MAX_SECONDS        = "20"
   RULES_FILE_PATH               = "data/rules.json"
   AGENT_CYCLE_SLEEP_SECONDS     = "60"
 }
