@@ -865,7 +865,86 @@ def test_azure_foundry_engine_retries_with_max_completion_tokens(
     second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
     assert "max_tokens" in first_call_kwargs
     assert "max_completion_tokens" not in first_call_kwargs
+    assert first_call_kwargs["response_format"] == "json_object"
     assert second_call_kwargs["model_extras"] == {"max_completion_tokens": 300}
+
+
+@pytest.mark.usefixtures("temp_env")
+@patch("src.ai_client.time.sleep", return_value=None)
+@patch("src.ai_client.ChatCompletionsClient")
+def test_azure_foundry_engine_retries_on_rate_limit(
+    mock_azure_client, mock_sleep, monkeypatch
+):
+    """Proves transient rate limits are retried before failing open."""
+    monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
+    monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_TRANSIENT_RETRIES", "2")
+
+    engine = AIEngineFactory.get_engine()
+    assert isinstance(engine, AzureFoundryEngine)
+    azure_engine = cast(AzureFoundryEngine, engine)
+
+    mock_choice = MagicMock()
+    mock_choice.message.content = (
+        '{"suggested_classification": "Azure_Tested", "suggested_action": "drop"}'
+    )
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+
+    cast(Any, azure_engine.client).complete.side_effect = [
+        Exception(
+            "(rate_limit_exceeded) Your requests to gpt-5-mini have exceeded rate limit."
+        ),
+        mock_response,
+    ]
+
+    result = azure_engine.call_llm(
+        "Client_1", "ValidationFailed", "Missing email", '{"account": "123"}'
+    )
+
+    assert result["suggested_action"] == "drop"
+    assert cast(Any, azure_engine.client).complete.call_count == 2
+    mock_sleep.assert_called_once()
+
+
+@pytest.mark.usefixtures("temp_env")
+@patch("src.ai_client.time.sleep", return_value=None)
+@patch("src.ai_client.ChatCompletionsClient")
+def test_azure_foundry_engine_retries_on_empty_response(
+    mock_azure_client, mock_sleep, monkeypatch
+):
+    """Proves empty model payloads are retried as transient responses."""
+    monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
+    monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_TRANSIENT_RETRIES", "2")
+
+    engine = AIEngineFactory.get_engine()
+    assert isinstance(engine, AzureFoundryEngine)
+    azure_engine = cast(AzureFoundryEngine, engine)
+
+    empty_choice = MagicMock()
+    empty_choice.message.content = ""
+    empty_response = MagicMock()
+    empty_response.choices = [empty_choice]
+
+    ok_choice = MagicMock()
+    ok_choice.message.content = (
+        '{"suggested_classification": "Azure_Tested", "suggested_action": "escalate"}'
+    )
+    ok_response = MagicMock()
+    ok_response.choices = [ok_choice]
+
+    cast(Any, azure_engine.client).complete.side_effect = [empty_response, ok_response]
+
+    result = azure_engine.call_llm(
+        "Client_1", "ValidationFailed", "Missing email", '{"account": "123"}'
+    )
+
+    assert result["suggested_action"] == "escalate"
+    assert cast(Any, azure_engine.client).complete.call_count == 2
+    mock_sleep.assert_called_once()
 
 
 @pytest.mark.usefixtures("temp_env")

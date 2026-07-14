@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
@@ -474,34 +475,77 @@ class AzureFoundryEngine(BaseAIEngine):
             f"Invoking Azure Foundry model: {self.deployment_name} for client: {client_id}"
         )
 
-        try:
-            response = self.client.complete(
-                messages=messages,
-                model=self.deployment_name,
-                max_tokens=self.max_tokens,  # Explicit real-time cost circuit breaker passed safely
-                **kwargs,
-            )
-            raw_text = response.choices[0].message.content
-            return self._salvage_json(raw_text)
-        except Exception as e:
-            # Some models (for example gpt-5-mini) require max_completion_tokens
-            # instead of max_tokens. Retry once with the compatible parameter via
-            # model_extras so the SDK forwards it to the service body.
-            message = str(e)
-            if "max_completion_tokens" in message and "max_tokens" in message:
-                self.logger.warning(
-                    "Azure Foundry model rejected max_tokens; retrying with max_completion_tokens."
-                )
-                response = self.client.complete(
-                    messages=messages,
-                    model=self.deployment_name,
-                    model_extras={"max_completion_tokens": self.max_tokens},
+        use_model_extras = False
+        transient_attempt = 0
+        max_transient_attempts = int(
+            os.getenv("AZURE_FOUNDRY_TRANSIENT_RETRIES", "2")
+        )
+
+        while True:
+            try:
+                request_kwargs: Dict[str, Any] = {
+                    "messages": messages,
+                    "model": self.deployment_name,
+                    "response_format": "json_object",
                     **kwargs,
-                )
+                }
+                if use_model_extras:
+                    request_kwargs["model_extras"] = {
+                        "max_completion_tokens": self.max_tokens
+                    }
+                else:
+                    # Explicit real-time cost circuit breaker passed safely.
+                    request_kwargs["max_tokens"] = self.max_tokens
+
+                response = self.client.complete(**request_kwargs)
+
+                if not response.choices:
+                    raise ValueError("Empty LLM response: no choices returned.")
+
                 raw_text = response.choices[0].message.content
+                if not raw_text:
+                    raise ValueError("Empty LLM response after unwrapping.")
+
                 return self._salvage_json(raw_text)
-            self.logger.error(f"Azure Foundry API failure: {e}")
-            raise
+            except Exception as e:
+                message = str(e)
+                message_lower = message.lower()
+
+                # Some models (for example gpt-5-mini) require max_completion_tokens
+                # instead of max_tokens. Retry once with the compatible parameter via
+                # model_extras so the SDK forwards it to the service body.
+                if (
+                    not use_model_extras
+                    and "max_completion_tokens" in message
+                    and "max_tokens" in message
+                ):
+                    self.logger.warning(
+                        "Azure Foundry model rejected max_tokens; retrying with max_completion_tokens."
+                    )
+                    use_model_extras = True
+                    continue
+
+                is_rate_limited = (
+                    "rate_limit_exceeded" in message_lower
+                    or "too many requests" in message_lower
+                    or " 429" in message_lower
+                    or message_lower.startswith("429")
+                )
+                is_empty_response = "empty llm response" in message_lower
+
+                if (is_rate_limited or is_empty_response) and (
+                    transient_attempt < max_transient_attempts
+                ):
+                    backoff_seconds = min(8.0, 1.5 * (2**transient_attempt))
+                    transient_attempt += 1
+                    self.logger.warning(
+                        f"Transient Azure Foundry response (attempt {transient_attempt}/{max_transient_attempts + 1}); retrying in {backoff_seconds:.1f}s: {message}"
+                    )
+                    time.sleep(backoff_seconds)
+                    continue
+
+                self.logger.error(f"Azure Foundry API failure: {e}")
+                raise
 
 
 class AIEngineFactory:
