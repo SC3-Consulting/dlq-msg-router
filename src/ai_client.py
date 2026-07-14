@@ -430,9 +430,9 @@ class AzureFoundryEngine(BaseAIEngine):
 
         # Read the explicit real-time cost circuit breaker from environment configuration
         try:
-            self.max_tokens = int(os.getenv("AZURE_FOUNDRY_MAX_TOKENS", "600"))
+            self.max_tokens = int(os.getenv("AZURE_FOUNDRY_MAX_TOKENS", "1200"))
         except ValueError:
-            self.max_tokens = 600
+            self.max_tokens = 1200
 
         # Correct SDK Auth Pattern: Pass TokenCredential directly
         # Explicitly declare the Cognitive Services audience for local testing
@@ -481,7 +481,7 @@ class AzureFoundryEngine(BaseAIEngine):
         current_max_tokens = self.max_tokens
         empty_response_boost_applied = False
         boosted_max_tokens = int(
-            os.getenv("AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS", "1200")
+            os.getenv("AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS", "2400")
         )
         max_transient_attempts = int(
             os.getenv("AZURE_FOUNDRY_TRANSIENT_RETRIES", "2")

@@ -834,7 +834,7 @@ def test_azure_foundry_engine_retries_with_max_completion_tokens(
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
     monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
     monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
-    monkeypatch.setenv("AZURE_FOUNDRY_MAX_TOKENS", "600")
+    monkeypatch.setenv("AZURE_FOUNDRY_MAX_TOKENS", "1200")
 
     engine = AIEngineFactory.get_engine()
     assert isinstance(engine, AzureFoundryEngine)
@@ -867,7 +867,7 @@ def test_azure_foundry_engine_retries_with_max_completion_tokens(
     assert "max_tokens" in first_call_kwargs
     assert "max_completion_tokens" not in first_call_kwargs
     assert first_call_kwargs["response_format"] == "json_object"
-    assert second_call_kwargs["model_extras"] == {"max_completion_tokens": 600}
+    assert second_call_kwargs["model_extras"] == {"max_completion_tokens": 1200}
 
 
 @pytest.mark.usefixtures("temp_env")
@@ -1038,8 +1038,8 @@ def test_azure_foundry_engine_retries_with_higher_tokens_on_reasoning_exhaustion
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
     monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
     monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
-    monkeypatch.setenv("AZURE_FOUNDRY_MAX_TOKENS", "600")
-    monkeypatch.setenv("AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS", "1200")
+    monkeypatch.setenv("AZURE_FOUNDRY_MAX_TOKENS", "1200")
+    monkeypatch.setenv("AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS", "2400")
 
     engine = AIEngineFactory.get_engine()
     assert isinstance(engine, AzureFoundryEngine)
@@ -1049,8 +1049,8 @@ def test_azure_foundry_engine_retries_with_higher_tokens_on_reasoning_exhaustion
     empty_choice.message.content = ""
     empty_choice.finish_reason = "length"
     empty_usage = MagicMock()
-    empty_usage.completion_tokens = 600
-    empty_usage.completion_tokens_details = {"reasoning_tokens": 600}
+    empty_usage.completion_tokens = 1200
+    empty_usage.completion_tokens_details = {"reasoning_tokens": 1200}
     empty_response = MagicMock()
     empty_response.choices = [empty_choice]
     empty_response.usage = empty_usage
@@ -1072,8 +1072,8 @@ def test_azure_foundry_engine_retries_with_higher_tokens_on_reasoning_exhaustion
     assert cast(Any, azure_engine.client).complete.call_count == 2
     first_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[0].kwargs
     second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
-    assert first_call_kwargs["max_tokens"] == 600
-    assert second_call_kwargs["model_extras"] == {"max_completion_tokens": 1200}
+    assert first_call_kwargs["max_tokens"] == 1200
+    assert second_call_kwargs["model_extras"] == {"max_completion_tokens": 2400}
 
 
 @pytest.mark.usefixtures("temp_env")
