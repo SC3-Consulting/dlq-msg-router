@@ -175,6 +175,45 @@ def _describe_content_shape(content: Any) -> str:
     return type(content).__name__
 
 
+def _print_response_diagnostics(response: Any) -> None:
+    """Prints non-content response diagnostics for troubleshooting empty outputs."""
+    choice = response.choices[0] if getattr(response, "choices", None) else None
+    if not choice:
+        return
+
+    finish_reason = getattr(choice, "finish_reason", None)
+    if finish_reason is not None:
+        print(f"[diag] Choice finish_reason: {finish_reason}")
+
+    content_filter_results = getattr(choice, "content_filter_results", None)
+    if content_filter_results is not None:
+        print(f"[diag] Choice content_filter_results: {content_filter_results}")
+
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        print(f"[diag] Usage: {usage}")
+
+    # Best-effort extraction in case the SDK model has additional fields not
+    # exposed as strongly-typed attributes.
+    as_dict = getattr(response, "as_dict", None)
+    if callable(as_dict):
+        try:
+            raw_dict = as_dict()
+            choices = raw_dict.get("choices") if isinstance(raw_dict, dict) else None
+            if isinstance(choices, list) and choices:
+                first = choices[0]
+                if isinstance(first, dict):
+                    for key in [
+                        "finish_reason",
+                        "content_filter_results",
+                        "message",
+                    ]:
+                        if key in first:
+                            print(f"[diag] Choice[{key}] from as_dict: {first[key]}")
+        except Exception:
+            pass
+
+
 def _run_raw_call(client_id: str, run_label: str, force_json_object: str) -> int:
     print("[diag] Running direct ChatCompletionsClient.complete...")
     engine = AzureFoundryEngine()
@@ -259,6 +298,7 @@ You must output YOUR ENTIRE RESPONSE as a single, valid JSON object. Do not incl
         print("[diag] No choices returned.")
         return 2
 
+    _print_response_diagnostics(response)
     content = response.choices[0].message.content
     print(f"[diag] Raw content shape: {_describe_content_shape(content)}")
     print("[diag] Raw model content:")
