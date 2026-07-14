@@ -1,12 +1,32 @@
+resource "random_string" "foundry_suffix" {
+  length  = 6
+  upper   = false
+  lower   = true
+  numeric = true
+  special = false
+
+  keepers = {
+    environment = var.suffix
+  }
+}
+
+locals {
+  foundry_name = substr(
+    lower("foundry-dlq-msg-router-${var.suffix}-${random_string.foundry_suffix.result}"),
+    0,
+    64,
+  )
+}
+
 resource "azurerm_cognitive_account" "foundry" {
-  name                          = "foundry-dlq-msg-router-99"
+  name                          = local.foundry_name
   location                      = var.location
   resource_group_name           = var.resource_group_name
   kind                          = "AIServices"
   sku_name                      = "S0"
   project_management_enabled    = true
   public_network_access_enabled = false
-  custom_subdomain_name         = "foundry-dlq-msg-router-99"
+  custom_subdomain_name         = local.foundry_name
 
   identity {
     type = "SystemAssigned"
