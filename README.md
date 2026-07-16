@@ -148,6 +148,7 @@ DLQ-AGENT/
 │   └── rules.json                          # Deterministic heuristic definitions
 ├── docs/
 │   ├── DEPLOYMENT_RUNBOOK.md               # Infrastructure IaC deployment guide
+    ├── DEMO.md                             # Demo specific KQL queries
 │   ├── OPERATOR_DASHBOARD_QUERIES.md       # Basic set of KQL LAW queries
 │   └── ops_guide.md                        # operations and maintenance 
 ├── infra/
