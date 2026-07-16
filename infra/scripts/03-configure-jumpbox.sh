@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ###############################################################################
-# 05-configure-jumpbox.sh
+# 03-configure-jumpbox.sh
 #
 # SYNOPSIS
 #   Automates the provisioning of the Ubuntu Jumpbox via Azure Bastion.
@@ -69,15 +69,27 @@ if [[ -z "${REPO_URL}" ]]; then
 fi
 readonly REPO_NAME=$(basename -s .git "${REPO_URL}")
 readonly CURRENT_BRANCH=$(git branch --show-current || true)
+readonly TARGET_BRANCH="${TARGET_BRANCH:-main}"
 
 if [[ -z "${CURRENT_BRANCH}" ]]; then
   echo "[-] Error: Unable to determine current git branch. Ensure you are on a branch, not a detached HEAD." >&2
   exit 1
 fi
 
-# TODO: Script should not have a dependency on a specific branch name. This is a temporary safeguard to ensure that the script is run from the correct context.
-if [[ "${CURRENT_BRANCH}" != "bash-migration-test" ]]; then
-  echo "[-] Error: This script must be run from the 'bash-migration-test' branch. Current branch is '${CURRENT_BRANCH}'." >&2
+if [[ -z "${TARGET_BRANCH// }" ]]; then
+  echo "[-] Error: TARGET_BRANCH is empty. Set a valid branch name (for example: export TARGET_BRANCH=main)." >&2
+  exit 1
+fi
+
+if [[ ! "${TARGET_BRANCH}" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+  echo "[-] Error: TARGET_BRANCH '${TARGET_BRANCH}' contains invalid characters." >&2
+  echo "[-] Allowed characters: letters, numbers, dot, underscore, dash, slash." >&2
+  exit 1
+fi
+
+if [[ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]]; then
+  echo "[-] Error: Branch safeguard failed. Current branch is '${CURRENT_BRANCH}', expected '${TARGET_BRANCH}'." >&2
+  echo "[-] Set TARGET_BRANCH to override the default expectation (main), for example: export TARGET_BRANCH=release/2026-07." >&2
   exit 1
 fi
 

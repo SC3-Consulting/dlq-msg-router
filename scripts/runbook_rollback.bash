@@ -7,7 +7,7 @@
 #   ./scripts/runbook_rollback.bash <resource-group> <container-app-name> [target-revision]
 # If target-revision is omitted, script selects the most recent INACTIVE revision.
 # Example:
-#   ./scripts/runbook_rollback.bash rg-dlq-msg-router-dev ca-dlq-msg-router-dev    
+#   ./scripts/runbook_rollback.bash rg-dlq-msg-router-dev ca-dlq-msg-router-dev
 #
 ##########################
 

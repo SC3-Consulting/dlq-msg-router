@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
 ##########################
-# 03-push-image.sh
+# 04-push-image.bash
 # Builds and pushes the Router Agent image to ACR
 #
 # Usage:
-#   ./infra/scripts/03-push-image.sh -e dev
+#   ./infra/scripts/04-push-image.bash -e dev
 ##########################
 set -euo pipefail
 
@@ -36,7 +36,7 @@ readonly JUMPBOX_AUTH_FILE="${ROOT_DIR}/.azure/jumpbox-auth.env"
 
 # Strict validation of required configuration files
 if [[ ! -f "${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl" ]]; then
-  echo "Error: Missing backend configuration. Run phase 1 and 2 first, then rerun 05-configure-jumpbox.sh from your local workstation to sync generated Terraform files onto the jumpbox." >&2
+  echo "Error: Missing backend configuration. Run phase 1 and 2 first, then rerun 03-configure-jumpbox.sh from your local workstation to sync generated Terraform files onto the jumpbox." >&2
   echo "Hint: Resolved environment='${ENVIRONMENT}'. If you invoked '-e \"\${TARGET_ENV}\"', ensure TARGET_ENV is exported on this shell." >&2
   exit 1
 fi
@@ -64,7 +64,7 @@ fi
 # Guard against running outside the Jumpbox
 echo "==> Authenticating to ACR..."
 if [[ -z "${AZURE_CLIENT_ID}" ]]; then
-  echo "Error: Missing AZURE_CLIENT_ID for jumpbox managed identity login. Ensure ${JUMPBOX_AUTH_FILE} exists (rerun 05-configure-jumpbox.sh)." >&2
+  echo "Error: Missing AZURE_CLIENT_ID for jumpbox managed identity login. Ensure ${JUMPBOX_AUTH_FILE} exists (rerun 03-configure-jumpbox.sh)." >&2
   exit 1
 fi
 

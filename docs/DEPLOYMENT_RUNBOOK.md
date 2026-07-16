@@ -131,10 +131,13 @@ The Jumpbox is a naked Ubuntu instance. We utilise a Bash script to establish a 
 
 TODO: Fix numeric ordering of scripts to reflect order they are to be run in.
 
+export TARGET_BRANCH="main" # Change this if testing on a different branch
+bash ./infra/scripts/03-configure-jumpbox.sh -e "${TARGET_ENV}"
+
 Execute this from your **local laptop terminal**:
 
 ```bash
-bash ./infra/scripts/05-configure-jumpbox.sh -e "${TARGET_ENV}"
+bash ./infra/scripts/03-configure-jumpbox.sh -e "${TARGET_ENV}"
 ```
 ### 2. Connect via Bastion & Push the Image
 Once the provisioning script completes successfully, use the Azure CLI to tunnel directly into the Jumpbox. 
@@ -153,12 +156,12 @@ Fallback manual workflow if script fails to run:
 
 Then while still on the jumpbox, execute the image push. *(Note: The Jumpbox Managed Identity has been granted the `Storage Blob Data Contributor` role, allowing it to seamlessly read the remote state and retrieve the ACR credentials).*
 
-**RBAC Propagation Note:** New or recently changed role assignments can take a short time to become effective. If `03-push-image.bash` fails during Terraform backend initialisation with a `403 AuthorizationPermissionMismatch`, wait 1-2 minutes and retry the command.
+**RBAC Propagation Note:** New or recently changed role assignments can take a short time to become effective. If `04-push-image.bash` fails during Terraform backend initialisation with a `403 AuthorizationPermissionMismatch`, wait 1-2 minutes and retry the command.
 
 ```bash
 cd dlq-msg-router
 TARGET_ENV="dev"
-bash ./infra/scripts/03-push-image.bash -e "${TARGET_ENV}"
+bash ./infra/scripts/04-push-image.bash -e "${TARGET_ENV}"
 ```
 
 Once the image push completes, type `exit` to return to your local terminal.
@@ -185,7 +188,7 @@ Return to the **local laptop terminal** and deploy the agent.
 **Architectural Note (Dynamic Variables):** The deployment module natively extracts `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE` and `AZURE_FOUNDRY_ENDPOINT` directly from the Terraform outputs. These are dynamically injected into the Azure Container App environment variables, preventing startup crashes.
 
 ```bash
-bash ./infra/scripts/04-deploy-agent.sh -e "${TARGET_ENV}"
+bash ./infra/scripts/05-deploy-agent.sh -e "${TARGET_ENV}"
 ```
 
 ## Phase 5: Live Fire Simulation
@@ -235,7 +238,7 @@ ContainerAppConsoleLogs_CL
 | where ContainerAppName_s == "ca-dlq-msg-router-<env>"
 | where Log_s startswith "CSV_EXPORT|"
 | extend csv_string = substring(Log_s, 11)
-| extend columns = split(csv_string, ",")
+| extend columns = parse_csv(csv_string)
 | project 
     timestamp = columns[0],
     source_queue = columns[1],

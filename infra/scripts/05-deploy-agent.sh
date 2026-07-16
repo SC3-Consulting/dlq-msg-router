@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ###############################################################################
-# 04-deploy-agent.sh
+# 05-deploy-agent.sh
 #
 # SYNOPSIS
 #   Deploys computing layers and bindings for the active agent orchestrator.

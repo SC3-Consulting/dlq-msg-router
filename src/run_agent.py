@@ -4,6 +4,7 @@ This module implements the main entry point for the Autonomous DLQ Agent Orchest
 """
 
 import csv
+import io
 import json
 import logging
 import os
@@ -362,11 +363,15 @@ class DemoTerminalDatabase:
                 contract.get("confidence_score", "N/A"),
             ]
             # Broadcast the row to Log Analytics
-            print(f"CSV_EXPORT|{','.join(map(str, row))}")
+            csv_buffer = io.StringIO()
+            csv.writer(csv_buffer).writerow(row)
+            csv_line = csv_buffer.getvalue().rstrip("\r\n")
+            print(f"CSV_EXPORT|{csv_line}")
 
             with open(self.filepath, mode="a", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(row)
+
 
 
 def disk_cleanup_daemon(store: IdempotencyStore):

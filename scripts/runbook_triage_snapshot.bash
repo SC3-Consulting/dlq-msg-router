@@ -7,7 +7,7 @@
 #   ./scripts/runbook_triage_snapshot.bash <resource-group> <container-app-name> [minutes]
 # If minutes is omitted, defaults to 60 minutes of log history.
 # Example:
-#   ./scripts/runbook_triage_snapshot.bash rg-dlq-msg-router-dev ca-dlq-msg-router-dev      
+#   ./scripts/runbook_triage_snapshot.bash rg-dlq-msg-router-dev ca-dlq-msg-router-dev
 #
 ##########################
 
