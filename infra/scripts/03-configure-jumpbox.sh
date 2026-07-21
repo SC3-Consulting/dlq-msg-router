@@ -232,13 +232,13 @@ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyr
 sudo chmod a+r /etc/apt/keyrings/docker.asc
 
 . /etc/os-release
-DOCKER_CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME}}"
-if [[ -z "${DOCKER_CODENAME}" ]]; then
+DOCKER_CODENAME="\${UBUNTU_CODENAME:-\${VERSION_CODENAME:-}}"
+if [[ -z "\${DOCKER_CODENAME}" ]]; then
   echo "[-] Error: Unable to resolve Ubuntu codename for Docker APT repository setup." >&2
   exit 1
 fi
 
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${DOCKER_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+echo "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \${DOCKER_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 sudo apt-get update >/dev/null 2>&1
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1
 
