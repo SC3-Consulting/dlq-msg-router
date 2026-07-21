@@ -1,0 +1,14 @@
+apiVersion: 1
+
+datasources:
+  - name: Azure Monitor
+    uid: azure-monitor
+    type: grafana-azure-monitor-datasource
+    access: proxy
+    isDefault: true
+    editable: false
+    jsonData:
+      azureAuthType: default
+      cloudName: azuremonitor
+      subscriptionId: ${AZURE_SUBSCRIPTION_ID}
+      logAnalyticsDefaultWorkspace: ${LOG_ANALYTICS_WORKSPACE_ID}

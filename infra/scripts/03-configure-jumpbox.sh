@@ -33,6 +33,42 @@ readonly BACKEND_FILE="${TF_DIR}/environments/${ENVIRONMENT}/backend.hcl"
 readonly BOOTSTRAP_VARS_FILE="${TF_DIR}/environments/${ENVIRONMENT}/bootstrap.generated.tfvars"
 readonly SSH_KEY_PATH="${HOME}/.ssh/dlq_jumpbox_rsa"
 
+require_terraform_output_raw() {
+  local output_name="$1"
+  local result_var_name="$2"
+  local output_value
+
+  if ! output_value="$(terraform output -raw "${output_name}" 2>/dev/null)"; then
+    echo "[-] Error: Unable to read Terraform output '${output_name}'. Ensure Phase 2 has been applied and state is reachable." >&2
+    exit 1
+  fi
+
+  if [[ -z "${output_value}" ]]; then
+    echo "[-] Error: Terraform output '${output_name}' is empty." >&2
+    exit 1
+  fi
+
+  printf -v "${result_var_name}" '%s' "${output_value}"
+}
+
+require_az_tsv() {
+  local query="$1"
+  local result_var_name="$2"
+  local value
+
+  if ! value="$(az account show --query "${query}" -o tsv 2>/dev/null)"; then
+    echo "[-] Error: Unable to query Azure CLI account field '${query}'." >&2
+    exit 1
+  fi
+
+  if [[ -z "${value}" ]]; then
+    echo "[-] Error: Azure CLI account field '${query}' is empty." >&2
+    exit 1
+  fi
+
+  printf -v "${result_var_name}" '%s' "${value}"
+}
+
 # Pre-flight validation
 if [[ ! -f "${SSH_KEY_PATH}" ]]; then
   echo "[-] Error: Jumpbox private key missing at ${SSH_KEY_PATH}. Run Phase 1." >&2
@@ -51,14 +87,77 @@ for f in "${BACKEND_FILE}" "${BOOTSTRAP_VARS_FILE}"; do
   fi
 done
 
+if ! command -v az >/dev/null 2>&1; then
+  echo "[-] Error: Azure CLI is not installed or not in PATH." >&2
+  exit 1
+fi
+
+if ! az account show >/dev/null 2>&1; then
+  echo "[-] Error: Azure CLI is not authenticated. Run 'az login' first." >&2
+  exit 1
+fi
+
 echo "==> Scraping dynamic infrastructure endpoints from Terraform state..."
 cd "${TF_DIR}"
-readonly SB_FQDN=$(terraform output -raw servicebus_namespace_fqdn)
-readonly FOUNDRY_EP=$(terraform output -raw foundry_endpoint)
-readonly CLIENT_ID=$(terraform output -raw agent_identity_client_id)
+SB_FQDN=""
+FOUNDRY_EP=""
+CLIENT_ID=""
+AZURE_TENANT_ID=""
+AZURE_SUBSCRIPTION_ID=""
+
+require_terraform_output_raw servicebus_namespace_fqdn SB_FQDN
+require_terraform_output_raw foundry_endpoint FOUNDRY_EP
+require_terraform_output_raw agent_identity_client_id CLIENT_ID
+require_az_tsv tenantId AZURE_TENANT_ID
+require_az_tsv id AZURE_SUBSCRIPTION_ID
+
+readonly SB_FQDN
+readonly FOUNDRY_EP
+readonly CLIENT_ID
 readonly FOUNDRY_DEPLOYMENT_NAME="${FOUNDRY_EP##*/}"
+readonly AZURE_TENANT_ID
+readonly AZURE_SUBSCRIPTION_ID
 readonly BACKEND_HCL_CONTENT="$(cat "${BACKEND_FILE}")"
 readonly BOOTSTRAP_VARS_CONTENT="$(cat "${BOOTSTRAP_VARS_FILE}")"
+
+readonly RG_NAME="rg-dlq-msg-router-${ENVIRONMENT}"
+readonly VM_NAME="vm-jumpbox-${ENVIRONMENT}"
+
+echo "==> Resolving Log Analytics workspace ID from resource group ${RG_NAME}..."
+if ! LOG_ANALYTICS_WORKSPACE_COUNT="$(az monitor log-analytics workspace list \
+  --resource-group "${RG_NAME}" \
+  --query "length(@)" \
+  -o tsv 2>/dev/null)"; then
+  echo "[-] Error: Failed to query Log Analytics workspaces in resource group ${RG_NAME}." >&2
+  exit 1
+fi
+readonly LOG_ANALYTICS_WORKSPACE_COUNT
+
+if [[ "${LOG_ANALYTICS_WORKSPACE_COUNT}" != "1" ]]; then
+  echo "[-] Error: Expected exactly 1 Log Analytics workspace in ${RG_NAME}, found ${LOG_ANALYTICS_WORKSPACE_COUNT}." >&2
+  echo "[-] Resolve workspace count ambiguity before running Phase 3." >&2
+  exit 1
+fi
+
+if ! LOG_ANALYTICS_WORKSPACE_ID="$(az monitor log-analytics workspace list \
+  --resource-group "${RG_NAME}" \
+  --query "[0].id" \
+  -o tsv 2>/dev/null)"; then
+  echo "[-] Error: Failed to resolve Log Analytics workspace ID in resource group ${RG_NAME}." >&2
+  exit 1
+fi
+readonly LOG_ANALYTICS_WORKSPACE_ID
+
+if [[ -z "${AZURE_SUBSCRIPTION_ID}" ]]; then
+  echo "[-] Error: Unable to resolve Azure subscription ID from current az login context." >&2
+  exit 1
+fi
+
+if [[ -z "${LOG_ANALYTICS_WORKSPACE_ID}" ]]; then
+  echo "[-] Error: Unable to resolve Log Analytics workspace ID in resource group ${RG_NAME}." >&2
+  echo "[-] Ensure observability resources are deployed before running Phase 3." >&2
+  exit 1
+fi
 
 echo "==> Resolving active Git repository and branch..."
 cd "${ROOT_DIR}"
@@ -93,9 +192,6 @@ if [[ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]]; then
   exit 1
 fi
 
-readonly RG_NAME="rg-dlq-msg-router-${ENVIRONMENT}"
-readonly VM_NAME="vm-jumpbox-${ENVIRONMENT}"
-
 echo "==> Initiating secure Bastion SSH payload delivery to ${VM_NAME}..."
 # We prefer piping a self-contained setup script directly into the Bastion SSH session.
 # Some older Azure CLI versions do not support the `--command` flag. Try the direct
@@ -104,7 +200,16 @@ echo "==> Initiating secure Bastion SSH payload delivery to ${VM_NAME}..."
 
 echo "==> Azure CLI: $(az --version 2>/dev/null | head -n1 || echo 'az not found')"
 echo "==> az path: $(command -v az || true)"
-readonly VM_ID=$(az vm show --resource-group "${RG_NAME}" --name "${VM_NAME}" --query id -o tsv)
+if ! VM_ID="$(az vm show --resource-group "${RG_NAME}" --name "${VM_NAME}" --query id -o tsv 2>/dev/null)"; then
+  echo "[-] Error: Failed to resolve VM ID for ${VM_NAME} in resource group ${RG_NAME}." >&2
+  exit 1
+fi
+readonly VM_ID
+
+if [[ -z "${VM_ID}" ]]; then
+  echo "[-] Error: VM ID lookup returned empty for ${VM_NAME}." >&2
+  exit 1
+fi
 
 # Prepare payload (unquoted so local variables are expanded) for reuse in both paths
 BASTION_PAYLOAD=$(cat <<PAYLOAD
@@ -158,7 +263,10 @@ echo "    [+] (Remote) Generating dynamic simulator .env configuration..."
 cat << INNER_EOF > .env
 # Azure Service Bus Configuration
 SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE="${SB_FQDN}"
+AZURE_TENANT_ID="${AZURE_TENANT_ID}"
 AZURE_CLIENT_ID="${CLIENT_ID}"
+AZURE_SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID}"
+LOG_ANALYTICS_WORKSPACE_ID="${LOG_ANALYTICS_WORKSPACE_ID}"
 
 # Toggle for RBAC-secured dynamic discovery of queues
 ENABLE_DYNAMIC_DISCOVERY="True"

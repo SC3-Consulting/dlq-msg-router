@@ -1,0 +1,272 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "azure-monitor"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "azureLogAnalytics": {
+            "dashboardTime": false,
+            "query": "ContainerAppConsoleLogs_CL\n| where ContainerAppName_s == \"$container_app_name\"\n| where Log_s startswith \"CSV_EXPORT|\"\n| extend csv_string = substring(Log_s, 11)\n| extend columns = parse_csv(csv_string)\n| project timestamp = columns[0], source_queue = columns[1], client_id = columns[2], message_type = columns[3], classification = columns[4], pattern = columns[5], status = columns[6], occurrence_count = columns[7], suggested_action = columns[8], confidence_score = columns[9]\n| sort by todatetime(timestamp) desc",
+            "resources": [
+              "${LOG_ANALYTICS_WORKSPACE_ID}"
+            ],
+            "resultFormat": "table"
+          },
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "azure-monitor"
+          },
+          "queryType": "Azure Log Analytics",
+          "refId": "A"
+        }
+      ],
+      "title": "Raw Telemetry Data Grid",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "azure-monitor"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "azureLogAnalytics": {
+            "dashboardTime": false,
+            "query": "ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(24h)\n| where ContainerAppName_s == \"$container_app_name\"\n| where Log_s contains \"JSON_EXPORT|\"\n| extend evt = parse_json(substring(Log_s, indexof(Log_s, \"JSON_EXPORT|\") + 12))\n| summarize total_processed = count() by bin(TimeGenerated, 5m)\n| order by TimeGenerated asc",
+            "resources": [
+              "${LOG_ANALYTICS_WORKSPACE_ID}"
+            ],
+            "resultFormat": "time_series"
+          },
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "azure-monitor"
+          },
+          "queryType": "Azure Log Analytics",
+          "refId": "A"
+        }
+      ],
+      "title": "System Health and Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "azure-monitor"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 3,
+      "options": {
+        "displayLabels": [
+          "name",
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "azureLogAnalytics": {
+            "dashboardTime": false,
+            "query": "ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(24h)\n| where ContainerAppName_s == \"$container_app_name\"\n| where Log_s contains \"JSON_EXPORT|\"\n| extend evt = parse_json(substring(Log_s, indexof(Log_s, \"JSON_EXPORT|\") + 12))\n| extend status = tostring(evt.status)\n| where isnotempty(status)\n| summarize total = count() by status\n| order by total desc",
+            "resources": [
+              "${LOG_ANALYTICS_WORKSPACE_ID}"
+            ],
+            "resultFormat": "table"
+          },
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "azure-monitor"
+          },
+          "queryType": "Azure Log Analytics",
+          "refId": "A"
+        }
+      ],
+      "title": "AI vs Deterministic Routing",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "azure-monitor"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 100
+      },
+      "targets": [
+        {
+          "azureLogAnalytics": {
+            "dashboardTime": false,
+            "query": "ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(24h)\n| where ContainerAppName_s == \"$container_app_name\"\n| where Log_s contains \"JSON_EXPORT|\"\n| extend evt = parse_json(substring(Log_s, indexof(Log_s, \"JSON_EXPORT|\") + 12))\n| extend suggested_action = tostring(evt.suggested_action)\n| where isnotempty(suggested_action)\n| summarize total = count() by suggested_action\n| order by total desc",
+            "resources": [
+              "${LOG_ANALYTICS_WORKSPACE_ID}"
+            ],
+            "resultFormat": "table"
+          },
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "azure-monitor"
+          },
+          "queryType": "Azure Log Analytics",
+          "refId": "A"
+        }
+      ],
+      "title": "Action Distribution",
+      "type": "barchart"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "dlq",
+    "azure",
+    "observability"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "ca-dlq-msg-router-dev",
+          "value": "ca-dlq-msg-router-dev"
+        },
+        "hide": 0,
+        "label": "Container App",
+        "name": "container_app_name",
+        "options": [
+          {
+            "selected": true,
+            "text": "ca-dlq-msg-router-dev",
+            "value": "ca-dlq-msg-router-dev"
+          }
+        ],
+        "query": "ca-dlq-msg-router-dev",
+        "skipUrlSync": false,
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "DLQ Telemetry MVP",
+  "uid": "dlq-telemetry-mvp",
+  "version": 1,
+  "weekStart": ""
+}

@@ -7,8 +7,7 @@ services:
     container_name: autonomous-dlq-agent
     restart: unless-stopped
     env_file:
-      - path: .env
-        required: false
+      - .env
     environment:
       # Commented out to force DefaultAzureCredential to fall back to Azure CLI
       # - AZURE_TENANT_ID=${AZURE_TENANT_ID}
@@ -95,6 +94,25 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    
+  # Local Observability: Grafana UI connected to Azure Log Analytics
+  # Blast radius: Read-only UI layer. Does not modify Azure state or agent execution.
+  # Trade-off: Anonymous admin access is enabled for frictionless local dev; do not deploy this configuration to the cloud.
+  grafana:
+    image: grafana/grafana:11.2.2
+    container_name: dlq-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    volumes:
+      - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
 volumes:
   dlq_agent_data:
