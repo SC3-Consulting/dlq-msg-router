@@ -267,6 +267,6 @@
   "timezone": "browser",
   "title": "DLQ Telemetry MVP",
   "uid": "dlq-telemetry-mvp",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
