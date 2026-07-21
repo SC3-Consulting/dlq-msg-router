@@ -6,11 +6,12 @@ if [ -z "${LOG_ANALYTICS_WORKSPACE_ID:-}" ]; then
   exit 1
 fi
 
-mkdir -p /var/lib/grafana/dashboards
+RUNTIME_DASHBOARD_DIR="/tmp/grafana-dashboards"
+mkdir -p "${RUNTIME_DASHBOARD_DIR}"
 
 for template in /etc/grafana/dashboard-templates/*.json; do
   [ -e "$template" ] || continue
-  output="/var/lib/grafana/dashboards/$(basename "$template")"
+  output="${RUNTIME_DASHBOARD_DIR}/$(basename "$template")"
   sed "s|@@LOG_ANALYTICS_WORKSPACE_ID@@|${LOG_ANALYTICS_WORKSPACE_ID}|g" "$template" > "$output"
 done
 
