@@ -218,11 +218,35 @@ set -euo pipefail
 echo "    [+] (Remote) Installing Azure CLI..."
 curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash >/dev/null 2>&1
 
-echo "    [+] (Remote) Updating APT packages and installing Git, Snap, Terraform, Python and Docker toolchains..."
+echo "    [+] (Remote) Updating APT packages and installing Git, Snap, Terraform and Python toolchains..."
 sudo apt-get update >/dev/null 2>&1
-sudo apt-get install -y git curl snapd docker.io python3-pip python3-venv >/dev/null 2>&1
+sudo apt-get install -y git curl snapd python3-pip python3-venv ca-certificates gnupg lsb-release >/dev/null 2>&1
 sudo snap install terraform --classic >/dev/null 2>&1
-sudo chmod 666 /var/run/docker.sock || true
+
+echo "    [+] (Remote) Purging legacy Docker and Compose packages to prevent v1 runtime conflicts..."
+sudo apt-get remove -y docker docker-engine docker.io containerd runc docker-compose python3-docker >/dev/null 2>&1 || true
+
+echo "    [+] (Remote) Installing Docker Engine and Compose v2 from Docker official APT repository..."
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc >/dev/null
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+. /etc/os-release
+DOCKER_CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME}}"
+if [[ -z "${DOCKER_CODENAME}" ]]; then
+  echo "[-] Error: Unable to resolve Ubuntu codename for Docker APT repository setup." >&2
+  exit 1
+fi
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${DOCKER_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+sudo apt-get update >/dev/null 2>&1
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null 2>&1
+
+echo "    [+] (Remote) Granting azureuser non-root Docker access..."
+sudo groupadd -f docker
+sudo usermod -aG docker azureuser
+sudo systemctl enable docker >/dev/null 2>&1 || true
+sudo systemctl start docker >/dev/null 2>&1 || true
 
 echo "    [+] (Remote) Synchronising codebase from ${REPO_URL} (Branch: ${CURRENT_BRANCH})..."
 if [[ ! -d "${REPO_NAME}" ]]; then
