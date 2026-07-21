@@ -104,7 +104,7 @@ services:
     restart: unless-stopped
     entrypoint:
       - /bin/sh
-      - /etc/grafana/provisioning/render-and-run.sh
+      - /etc/grafana/scripts/render-and-run.sh
     ports:
       - "127.0.0.1:3000:3000"
     env_file:
@@ -118,6 +118,7 @@ services:
     volumes:
       - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ops/observability/grafana/dashboards:/etc/grafana/dashboard-templates:ro
+      - ./ops/observability/grafana/scripts:/etc/grafana/scripts:ro
 
 volumes:
   dlq_agent_data:
