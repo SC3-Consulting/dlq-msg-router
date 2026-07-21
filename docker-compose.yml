@@ -102,22 +102,22 @@ services:
     image: grafana/grafana:11.2.2
     container_name: dlq-grafana
     restart: unless-stopped
-    command:
+    entrypoint:
       - /bin/sh
       - -eu
       - -c
-      - |
-        if [ -z "$$LOG_ANALYTICS_WORKSPACE_ID" ]; then
-          echo "LOG_ANALYTICS_WORKSPACE_ID is required" >&2
-          exit 1
-        fi
-        mkdir -p /var/lib/grafana/dashboards
-        for template in /etc/grafana/dashboard-templates/*.json; do
-          [ -e "$$template" ] || continue
-          output="/var/lib/grafana/dashboards/$$(basename "$$template")"
-          sed "s|@@LOG_ANALYTICS_WORKSPACE_ID@@|$$LOG_ANALYTICS_WORKSPACE_ID|g" "$$template" > "$$output"
-        done
-        exec /run.sh
+    command: |
+      if [ -z "$${LOG_ANALYTICS_WORKSPACE_ID}" ]; then
+        echo "LOG_ANALYTICS_WORKSPACE_ID is required" >&2
+        exit 1
+      fi
+      mkdir -p /var/lib/grafana/dashboards
+      for template in /etc/grafana/dashboard-templates/*.json; do
+        [ -e "$$template" ] || continue
+        output="/var/lib/grafana/dashboards/$$(basename "$$template")"
+        sed "s|@@LOG_ANALYTICS_WORKSPACE_ID@@|$$LOG_ANALYTICS_WORKSPACE_ID|g" "$$template" > "$$output"
+      done
+      exec /run.sh
     ports:
       - "127.0.0.1:3000:3000"
     env_file:
