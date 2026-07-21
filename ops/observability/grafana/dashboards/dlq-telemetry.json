@@ -157,7 +157,7 @@
         {
           "azureLogAnalytics": {
             "dashboardTime": false,
-            "query": "ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(24h)\n| where ContainerAppName_s == \"$container_app_name\"\n| where Log_s contains \"JSON_EXPORT|\"\n| extend evt = parse_json(substring(Log_s, indexof(Log_s, \"JSON_EXPORT|\") + 12))\n| extend status = tostring(evt.status)\n| where isnotempty(status)\n| extend route = case(status startswith \"AI_\", \"AI\", status == \"Auto_Classified\" or status == \"Auto_Classified_From_Cache\" or status == \"Dropped\", \"Deterministic\", \"Other\")\n| summarize total = count() by route\n| order by total desc",
+            "query": "ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(24h)\n| where ContainerAppName_s == \"$container_app_name\"\n| where Log_s contains \"JSON_EXPORT|\"\n| extend evt = parse_json(substring(Log_s, indexof(Log_s, \"JSON_EXPORT|\") + 12))\n| extend status = tostring(evt.status)\n| where isnotempty(status)\n| summarize AI = countif(status startswith \"AI_\"), Deterministic = countif(status == \"Auto_Classified\" or status == \"Auto_Classified_From_Cache\" or status == \"Dropped\"), Other = countif(not(status startswith \"AI_\") and status != \"Auto_Classified\" and status != \"Auto_Classified_From_Cache\" and status != \"Dropped\")",
             "resources": [
               "@@LOG_ANALYTICS_WORKSPACE_ID@@"
             ],
@@ -267,6 +267,6 @@
   "timezone": "browser",
   "title": "DLQ Telemetry MVP",
   "uid": "dlq-telemetry-mvp",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
