@@ -8,8 +8,7 @@ datasources:
     isDefault: true
     editable: false
     jsonData:
-      azureAuthType: managedidentity
-      managedIdentityClientId: ${AZURE_CLIENT_ID}
+      azureAuthType: msi
       cloudName: azuremonitor
       subscriptionId: ${AZURE_SUBSCRIPTION_ID}
       logAnalyticsDefaultWorkspace: ${LOG_ANALYTICS_WORKSPACE_ID}
