@@ -102,6 +102,22 @@ services:
     image: grafana/grafana:11.2.2
     container_name: dlq-grafana
     restart: unless-stopped
+    command:
+      - /bin/sh
+      - -eu
+      - -c
+      - |
+        if [ -z "$$LOG_ANALYTICS_WORKSPACE_ID" ]; then
+          echo "LOG_ANALYTICS_WORKSPACE_ID is required" >&2
+          exit 1
+        fi
+        mkdir -p /var/lib/grafana/dashboards
+        for template in /etc/grafana/dashboard-templates/*.json; do
+          [ -e "$$template" ] || continue
+          output="/var/lib/grafana/dashboards/$$(basename "$$template")"
+          sed "s|@@LOG_ANALYTICS_WORKSPACE_ID@@|$$LOG_ANALYTICS_WORKSPACE_ID|g" "$$template" > "$$output"
+        done
+        exec /run.sh
     ports:
       - "127.0.0.1:3000:3000"
     env_file:
@@ -114,8 +130,10 @@ services:
       - GF_AZURE_MANAGED_IDENTITY_CLIENT_ID=${AZURE_CLIENT_ID}
     volumes:
       - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./ops/observability/grafana/dashboards:/etc/grafana/dashboard-templates:ro
+      - grafana_dashboards:/var/lib/grafana/dashboards
 
 volumes:
   dlq_agent_data:
   dlq_agent_reports:
+  grafana_dashboards:
