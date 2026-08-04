@@ -863,7 +863,9 @@ def test_azure_foundry_engine_retries_with_max_completion_tokens(
     assert cast(Any, azure_engine.client).complete.call_count == 2
 
     first_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[0].kwargs
-    second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    second_call_kwargs = (
+        cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    )
     assert "max_tokens" in first_call_kwargs
     assert "max_completion_tokens" not in first_call_kwargs
     assert first_call_kwargs["response_format"] == "json_object"
@@ -984,7 +986,9 @@ def test_azure_foundry_engine_retries_without_temperature_on_unsupported_value(
     assert result["suggested_action"] == "drop"
     assert cast(Any, azure_engine.client).complete.call_count == 2
     first_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[0].kwargs
-    second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    second_call_kwargs = (
+        cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    )
     assert first_call_kwargs["temperature"] == 0.1
     assert "temperature" not in second_call_kwargs
 
@@ -1024,7 +1028,9 @@ def test_azure_foundry_engine_retries_without_response_format_on_empty_content(
     assert result["suggested_action"] == "drop"
     assert cast(Any, azure_engine.client).complete.call_count == 2
     first_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[0].kwargs
-    second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    second_call_kwargs = (
+        cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    )
     assert first_call_kwargs["response_format"] == "json_object"
     assert "response_format" not in second_call_kwargs
 
@@ -1071,7 +1077,9 @@ def test_azure_foundry_engine_retries_with_higher_tokens_on_reasoning_exhaustion
     assert result["suggested_action"] == "drop"
     assert cast(Any, azure_engine.client).complete.call_count == 2
     first_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[0].kwargs
-    second_call_kwargs = cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    second_call_kwargs = (
+        cast(Any, azure_engine.client).complete.call_args_list[1].kwargs
+    )
     assert first_call_kwargs["max_tokens"] == 1200
     assert second_call_kwargs["model_extras"] == {"max_completion_tokens": 2400}
 

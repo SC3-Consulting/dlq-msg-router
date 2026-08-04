@@ -373,7 +373,6 @@ class DemoTerminalDatabase:
                 writer.writerow(row)
 
 
-
 def disk_cleanup_daemon(store: IdempotencyStore):
     """Background thread that runs hourly to purge expired dbm keys.
     Args:

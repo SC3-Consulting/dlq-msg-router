@@ -53,7 +53,11 @@ def _resolve_service_bus_namespace() -> str:
                 "Using SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE from Terraform output."
             )
             return terraform_output
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
         pass
 
     return namespace

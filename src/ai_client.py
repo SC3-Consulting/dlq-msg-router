@@ -419,9 +419,7 @@ class AzureFoundryEngine(BaseAIEngine):
         # Cognitive resources. Accept either a base account endpoint or deployment URL.
         base_endpoint = self.endpoint.rstrip("/")
         if "/openai/deployments/" not in base_endpoint:
-            self.endpoint = (
-                f"{base_endpoint}/openai/deployments/{self.deployment_name}"
-            )
+            self.endpoint = f"{base_endpoint}/openai/deployments/{self.deployment_name}"
         else:
             self.endpoint = base_endpoint
 
@@ -483,9 +481,7 @@ class AzureFoundryEngine(BaseAIEngine):
         boosted_max_tokens = int(
             os.getenv("AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS", "2400")
         )
-        max_transient_attempts = int(
-            os.getenv("AZURE_FOUNDRY_TRANSIENT_RETRIES", "2")
-        )
+        max_transient_attempts = int(os.getenv("AZURE_FOUNDRY_TRANSIENT_RETRIES", "2"))
 
         while True:
             try:
@@ -509,7 +505,9 @@ class AzureFoundryEngine(BaseAIEngine):
                 if not response.choices:
                     raise ValueError("Empty LLM response: no choices returned.")
 
-                raw_text = self._extract_response_text(response.choices[0].message.content)
+                raw_text = self._extract_response_text(
+                    response.choices[0].message.content
+                )
                 if not raw_text:
                     if (
                         not empty_response_boost_applied
@@ -561,10 +559,7 @@ class AzureFoundryEngine(BaseAIEngine):
 
                 # Some responses return HTTP 200 with empty content when forcing
                 # json_object. Retry once without forcing response_format.
-                if (
-                    force_json_response
-                    and "empty llm response" in message_lower
-                ):
+                if force_json_response and "empty llm response" in message_lower:
                     self.logger.warning(
                         "Azure Foundry returned empty content with json_object; retrying without forced response_format."
                     )
@@ -622,10 +617,9 @@ class AzureFoundryEngine(BaseAIEngine):
             if completion_tokens is None or reasoning_tokens is None:
                 return False
 
-            return (
-                int(completion_tokens) >= int(current_max_tokens)
-                and int(reasoning_tokens) >= int(current_max_tokens)
-            )
+            return int(completion_tokens) >= int(current_max_tokens) and int(
+                reasoning_tokens
+            ) >= int(current_max_tokens)
         except Exception:
             return False
 
