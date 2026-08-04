@@ -18,6 +18,8 @@ htmlcov/
 # Local Data & State
 data/idempotency.db*
 reports/*.csv
+reports/*.json
+reports/triage/
 # (Optional) Force git to track a specific sample file if you want it in the repo:
 # !reports/telemetry_dashboard.csv 
 
@@ -39,3 +41,5 @@ infra/terraform/azure/environments/**/bootstrap.generated.tfvars
 # OS and Installer Garbage
 *.deb
 *:Zone.Identifier
+reports/*.json
+reports/triage/

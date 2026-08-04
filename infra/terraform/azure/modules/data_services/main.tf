@@ -1,5 +1,27 @@
+resource "random_string" "acr_suffix" {
+  length  = 6
+  upper   = false
+  lower   = true
+  numeric = true
+  special = false
+
+  keepers = {
+    environment = var.suffix
+    seed        = var.acr_name_seed
+  }
+}
+
+locals {
+  default_acr_name = substr(
+    lower("acrdlqmsgrouter${var.suffix}${random_string.acr_suffix.result}"),
+    0,
+    50,
+  )
+  acr_name = trimspace(var.acr_name_override) != "" ? lower(trimspace(var.acr_name_override)) : local.default_acr_name
+}
+
 resource "azurerm_container_registry" "this" {
-  name                          = "acrvivadlqswastik99"
+  name                          = local.acr_name
   resource_group_name           = var.resource_group_name
   location                      = var.location
   sku                           = "Premium"
@@ -7,8 +29,29 @@ resource "azurerm_container_registry" "this" {
   public_network_access_enabled = false
 }
 
+resource "random_string" "servicebus_suffix" {
+  length  = 6
+  upper   = false
+  lower   = true
+  numeric = true
+  special = false
+
+  keepers = {
+    environment = var.suffix
+    seed        = var.servicebus_name_seed
+  }
+}
+
+locals {
+  servicebus_name = substr(
+    lower("sb-dlq-msg-router-${var.suffix}-${random_string.servicebus_suffix.result}"),
+    0,
+    50,
+  )
+}
+
 resource "azurerm_servicebus_namespace" "this" {
-  name                          = "sb-viva-dlq-swastik-99"
+  name                          = local.servicebus_name
   location                      = var.location
   resource_group_name           = var.resource_group_name
   sku                           = "Premium"
@@ -26,14 +69,14 @@ resource "azurerm_servicebus_queue" "parking_lot" {
 }
 
 resource "azurerm_servicebus_queue" "integration" {
-  name         = "viva-integration-queue"
+  name         = "integration-queue"
   namespace_id = azurerm_servicebus_namespace.this.id
   dead_lettering_on_message_expiration = true
   max_delivery_count                   = 10
 }
 
 resource "azurerm_servicebus_queue" "payment" {
-  name         = "viva-payment-queue"
+  name         = "payments-queue"
   namespace_id = azurerm_servicebus_namespace.this.id
   dead_lettering_on_message_expiration = true
   max_delivery_count                   = 10

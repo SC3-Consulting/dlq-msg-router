@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: dlq-telemetry
+    orgId: 1
+    folder: DLQ Observability
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /tmp/grafana-dashboards

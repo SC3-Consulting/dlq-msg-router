@@ -2,21 +2,69 @@
 
 This document outlines the step-by-step procedures for provisioning the secure, Zero Trust infrastructure for the Autonomous DLQ Triage Pipeline via Terraform. It serves as a comprehensive, zero-assumption guide designed to take an operator from a blank terminal to a fully operational, AI-augmented triage agent in Azure. 
 
-Every command, operational trap, and environmental patch required for a flawless execution is documented below.
+Every command, operational trap, and environmental patch required to deploy the required infrastructure and agent is documented below.
+
+## Execution Model
+
+Use these three terminals consistently throughout the deployment:
+
+1. Terminal 1 (Local Control Plane): run Phases 01, 02, and 03 from your workstation.
+2. Terminal 2 (Jumpbox Execution Plane): open the Bastion SSH session, then run Phase 04, start Grafana, and execute the simulators after Phase 05 completes.
+3. Terminal 3 (Local Tunnel): open the Bastion-backed port-forwarded SSH session for Grafana access on `localhost:3000`.
+
+Set these once before you begin:
+
+```bash
+export TARGET_ENV="<target-environment>"
+export TARGET_BRANCH="<target-branch>"
+export TARGET_LOCATION="australiaeast"
+```
 
 ## Architectural Context & Permission Constraints
 
-To adhere to strict enterprise security mandates, the deployment is orchestrated via PowerShell wrappers. This ensures secure injection of CLI credentials without exposing sensitive variables to version control. 
+To adhere to strict enterprise security mandates, the deployment is orchestrated via either PowerShell wrappers or Bash scripts. This ensures secure injection of CLI credentials without exposing sensitive variables to version control. 
 
-**The Resource Group Strategy:** Initially, separating the remote state storage (Storage Account and Key Vault) into a dedicated resource group is best practice. However, due to tenant-level 'User Access Administrator' restrictions preventing cross-resource-group role assignments, all infrastructure—including the state bootstrap—must be encapsulated within a pre-existing resource group (e.g., 'rg-viva-dlq-dev') where 'Owner' permissions are already established. This allows Terraform to autonomously execute the required 'Storage Blob Data Contributor' and 'Key Vault Secrets Officer' role assignments without elevated tenant approvals.
+**The Resource Group Strategy:** Separating the remote state storage (Storage Account and Key Vault) into a dedicated resource group separate to the other resources is best practice. However, due to tenant-level 'User Access Administrator' restrictions preventing cross-resource-group role assignments in a restricted sandbox development environment, all infrastructure — including the state bootstrap — is encapsulated within a pre-existing resource group (e.g., `rg-dlq-msg-router-<env>`) where 'Owner' permissions are already established. This allows Terraform to autonomously execute the required 'Storage Blob Data Contributor' and 'Key Vault Secrets Officer' role assignments without elevated tenant approvals. In an Enterprise Production deployment, consideration should be made to refactor this implementation using multiple resource groups aligned with support responsibilities and appropriate boundary demarcations.
 
 ---
 
 ## Phase 0: Pre-flight Preparation & Authentication
 
-Before initiating the deployment, authenticate the local terminal and prepare the secure SSH keys required for jumpbox access.
+Before initiating the deployment, authenticate the local terminal.
 
 **Architectural Note (The Ephemeral Storage Bypass):** Azure Container Apps utilise ephemeral disks. Attempting to extract physical CSV telemetry files triggers an 'AuthorizationFailed' RBAC error. To bypass this securely, the repository's codebase (`src/run_agent.py`) is already pre-configured to broadcast telemetry directly to Azure Log Analytics via standard output. It intercepts the telemetry array and prints it using the following format: `print(f"CSV_EXPORT|{','.join(map(str, row))}")`. No manual code patching is required.
+
+0. Base build environment
+
+``` bash
+sudo apt-get update
+sudo apt-get upgrade
+
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash # install Azure CLI
+az extension add -n ssh
+
+sudo apt install build-essential # optional for make commands, or just run sudo apt install make
+
+sudo apt-get install python3-venv # create the project's Python virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt # install project dependencies into the venv
+
+sudo ./infra/scripts/install-terraform.bash # install Terraform
+
+cp .env.example .env # create a .env file and update values as required
+```
+
+Minimum tool versions for this repository:
+- Terraform >= 1.9.0
+- Azure CLI >= 2.30.0 (required for `az account get-access-token --scope ...`, used by `azurerm` provider v4)
+
+Validate the Azure CLI capability before Phase 1:
+
+```bash
+az version --query '"azure-cli"' -o tsv
+az account get-access-token --scope https://graph.microsoft.com/.default -o none
+```
 
 1. Authenticate with Azure using the device code flow for secure, headless login:
 
@@ -24,44 +72,45 @@ Before initiating the deployment, authenticate the local terminal and prepare th
 az login --use-device-code
 ```
 
-2. Generate a local SSH key pair to securely access the Azure Bastion Jumpbox. Do not set a passphrase when prompted:
+1a. If to be deployed to a different subscription to the default associated with your login and not selected at time of login:
 
 ```bash
-ssh-keygen -m PEM -t rsa -b 4096 -f ~/.ssh/viva_jumpbox_rsa -N ""
+az account set --subscription "My Subscription Name"
 ```
 
-3. **Trap Resolution (Soft-Deleted Vaults):** Azure retains Key Vaults in a soft-deleted state, blocking recreation. If a previous deployment was torn down, purge the old vault manually before proceeding. Replace the name with your specific vault target:
+1b. If you need to create the resource group and have permissions to do so:
 
 ```bash
-az keyvault purge --name kvtfstatelogia7 --location australiaeast
+# Check whether the resource group exists.
+az group show --name "rg-dlq-msg-router-${TARGET_ENV}"
+
+# If it does not exist, create it (assuming you have permission to do so within the subscription).
+az group create --name "rg-dlq-msg-router-${TARGET_ENV}" --location "${TARGET_LOCATION}"
+```
+
+2. **Trap Resolution (Soft-Deleted Vaults):** Azure retains Key Vaults in a soft-deleted state, blocking recreation. If a previous deployment was torn down, purge the old vault manually before proceeding. Replace the name with your specific vault target:
+
+```bash
+az keyvault purge --name <kvtfstatexxxxxx> --location australiaeast
 ```
 
 ---
 
 ## Phase 1: Remote State Bootstrap
 
-**Objective:** Provision the foundational Azure resources required to securely execute Terraform. This creates the Storage Account for the '.tfstate' file and the Key Vault.
+**Objective:** Provision the foundational Azure resources required to securely execute Terraform. This creates the Storage Account for the '.tfstate' file and the Key Vault, and handles all SSH key generation securely.
 
-1. Execute the Phase 1 PowerShell orchestrator from your local repository root:
-
-```powershell
-pwsh ./infra/scripts/01-bootstrap.ps1
-```
-
-2. **Secure Key Injection:** Once the Key Vault is provisioned, manually read the generated public key and inject it into the vault as a secret. Execute these commands in your local PowerShell terminal:
-
-```powershell
-$PubKey = Get-Content ~/.ssh/viva_jumpbox_rsa.pub -Raw
-az keyvault secret set --vault-name kvtfstatelogia7 --name jumpbox-admin-ssh-public-key-dev --value "$PubKey"
-```
-
-3. Initialise the Terraform backend memory to link the local workspace to the newly created Storage Account:
+1. Execute the Phase 1 Bash orchestrator from your local repository root:
 
 ```bash
-cd infra/terraform/azure
-terraform init -reconfigure -backend-config=environments/dev/backend.hcl
-cd ../../..
+bash ./infra/scripts/01-bootstrap.sh -e "${TARGET_ENV}" -l "${TARGET_LOCATION}"
 ```
+
+2. **Automated State & Security Initialisation:** The `01-bootstrap.sh` script will autonomously generate the local SSH key pair (if not present), provision the remote state storage, inject the public key into the Key Vault, and generate the `backend.hcl` configuration. 
+
+**Architectural Note (Zero Trust Key Management):** The private SSH key is intentionally *not* stored in the Key Vault. Storing a private key in a centralised vault creates an escalation vulnerability. To maintain least-privilege Zero Trust, the private key remains strictly on the operator's local machine (or ephemeral CI/CD runner), whilst only the public key is distributed to the vault and target infrastructure.
+
+*(Note: Terraform initialisation for the main environment is handled automatically by the subsequent wrapper scripts. No manual `terraform init` is required).*
 
 ---
 
@@ -69,10 +118,10 @@ cd ../../..
 
 **Objective:** Deploy the Virtual Network, Private Endpoints, Azure Container Registry (ACR), Premium Service Bus, and the Azure Foundry cognitive accounts.
 
-1. Execute the Phase 2 orchestrator:
+1. Execute the Phase 2 orchestrator to deploy the VNet, ACR, Service Bus, and Azure Foundry endpoints:
 
-```powershell
-pwsh ./infra/scripts/02-deploy-network-and-data.ps1
+```bash
+bash ./infra/scripts/02-deploy-network-and-data.sh -e "${TARGET_ENV}"
 ```
 
 2. Commit the structural changes to version control to ensure the remote repository is prepared for the jumpbox pull:
@@ -80,107 +129,58 @@ pwsh ./infra/scripts/02-deploy-network-and-data.ps1
 ```bash
 git add .
 git commit -m "Phase 2: IaC modules, runbooks, and strict repo cleanup"
-git push
+git push origin "${TARGET_BRANCH}"
 ```
 
 ---
 
-## Phase 3: Jumpbox Provisioning & The Split-Brain Fix
+## Phase 3: Jumpbox Configuration & Image Push
 
-**Objective:** Securely breach the private network via Azure Bastion, configure the bare-metal Jumpbox, inject the environment variables, and push the Docker image.
+**Objective:** Securely automate the jumpbox configuration via an Azure Bastion Native Client tunnel, inject the dynamic environment variables, and push the Docker image.
 
-### 1. Breach the Jumpbox
-1. Navigate to the Azure Portal.
-2. Open 'vm-jumpbox-dev' and select 'Connect' -> 'Bastion'.
-3. Username: 'azureuser'
-4. Authentication Type: 'SSH Private Key from Local File'.
-5. Upload the private key ('~/.ssh/viva_jumpbox_rsa' - select the file WITHOUT the '.pub' extension).
-6. Uncheck 'Open in new browser tab', then click 'Connect'.
-
-### 2. Provision the Bare-Metal Environment
-The Jumpbox is a naked Ubuntu instance. Paste the following block directly into the Bastion terminal to install dependencies, clone the code, and bypass PEP 668 restrictions. Replace 'YOUR_GITHUB_USERNAME' with the actual username.
+### Terminal 1: Configure the Jumpbox from the Local Control Plane
+The Jumpbox is a naked Ubuntu instance. Use the local shell to open the Bastion SSH session and let the script install `docker.io`, `python3-venv`, and `terraform`, clone the repository, and generate the jumpbox runtime files from Terraform state.
 
 ```bash
-curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-sudo apt-get update
-sudo apt-get install -y docker.io python3-pip python3-venv
-sudo chmod 666 /var/run/docker.sock
-git clone https://github.com/YOUR_GITHUB_USERNAME/viva-dlq-agent.git
-cd viva-dlq-agent
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+export TARGET_BRANCH="<target-branch>"
+bash ./infra/scripts/03-configure-jumpbox.sh -e "${TARGET_ENV}"
 ```
 
-### 3. The Split-Brain Environment Patch
-**Trap Resolution:** The cloud agent dynamically discovers queues, whilst the Jumpbox simulators default to reading local JSON files. If a queue name has a typo in the local JSON, the simulators will crash with an 'amqp:not-found' error. 
-
-To synchronise the Jumpbox with the production logic, the simulators must be forced to hit the Service Bus API. Paste this exact configuration into the Jumpbox terminal to create the '.env' file:
+### Terminal 2: Bastion SSH Session and Image Push
+Once Phase 03 completes, open the Bastion SSH session to the jumpbox and keep this terminal open for the jumpbox execution plane.
 
 ```bash
-cat << 'EOF' > .env
-# Azure Service Bus Configuration
-SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE="sb-viva-dlq-.servicebus.windows.net"
-
-# Toggle for RBAC-secured dynamic discovery of queues
-ENABLE_DYNAMIC_DISCOVERY="True"
-# Comma-separated list of queues to ignore during dynamic discovery
-EXCLUDED_QUEUES="parking-lot-queue,system-queue,archive-queue"
-
-# Fallback JSON Array if Dynamic Discovery is disabled or hits an RBAC 403 error
-ASB_SOURCES_FILE="data/asb_sources.json"
-PARKING_LOT_QUEUE_NAME="parking-lot-queue"
-
-# Maximum number of concurrent queues processed at any given second
-MAX_CONCURRENT_QUEUES=5
-ASB_MAX_MESSAGE_COUNT=10
-ASB_MAX_WAIT_TIME=5
-# Fills local RAM buffer to eliminate network latency during batch pulls
-PREFETCH_COUNT=20
-
-
-# Action Execution Feature Flags
-ENABLE_NEW_MESSAGE_ID_ON_RETRY="True"
-
-# Cache & Threshold Configuration
-IDEMPOTENCY_TTL_SECONDS=86400
-CLASSIFICATION_TTL_SECONDS=600
-MAX_RESUBMIT_COUNT=3
-DUPLICATE_NOISE_THRESHOLD=10
-
-# Storage Paths
-TELEMETRY_CSV_PATH="reports/telemetry_dashboard.csv"
-IDEMPOTENCY_DB_PATH="data/idempotency.db"
-
-# AI Client Configuration
-OLLAMA_MODEL="qwen2.5:0.5b"
-OLLAMA_ENDPOINT="http://localhost:11434/api/generate"
-OLLAMA_TEMPERATURE=0.1
-OLLAMA_NUM_CTX=4096
-OLLAMA_TIMEOUT=240
-
-# File Paths
-RULES_FILE_PATH="data/rules.json"
-
-
-# Azure Foundry Specifics (Required if AI_PROVIDER="AZURE_FOUNDRY")
-AI_PROVIDER="AZURE_FOUNDRY"
-AZURE_FOUNDRY_ENDPOINT="https://foundry-viva-.cognitiveservices.azure.com/openai/deployments/gpt-4o-mini"
-AZURE_FOUNDRY_DEPLOYMENT_NAME="gpt-4o-mini"
-AZURE_FOUNDRY_TEMPERATURE=0.1
-# Time to sleep (in seconds) after completing a full sweep of all queues
-# Prevents aggressive AMQP link churn if all DLQs are empty.
-AGENT_CYCLE_SLEEP_SECONDS=61
-# Dynamic Cost Controls (Your Real-Time Airbags)
-AZURE_FOUNDRY_MAX_TOKENS=300
-EOF
+az network bastion ssh \
+    --name "bas-${TARGET_ENV}" \
+    --resource-group "rg-dlq-msg-router-${TARGET_ENV}" \
+    --target-resource-id "$(az vm show --resource-group "rg-dlq-msg-router-${TARGET_ENV}" --name "vm-jumpbox-${TARGET_ENV}" --query id -o tsv)" \
+    --auth-type "ssh-key" \
+    --username "azureuser" \
+    --ssh-key ~/.ssh/dlq_jumpbox_rsa
 ```
 
-### 4. Build and Push the Image
-Execute the bash script to compile and push the container to the ACR using the Jumpbox's Managed Identity:
+Then, from inside the jumpbox session, push the image:
 
 ```bash
-bash ./infra/scripts/03-push-image.bash
+cd ~/dlq-msg-router
+bash ./infra/scripts/04-push-image.bash -e "${TARGET_ENV}"
+```
+RBAC Propagation Note: New or recently changed role assignments can take a short time to become effective. If `04-push-image.bash` fails during Terraform backend initialisation with a `403 AuthorizationPermissionMismatch`, wait 1-2 minutes and retry the command.
+
+Once the image push completes, keep the Bastion session available for Phase 05 validation, Grafana startup, and simulator execution.
+
+### Terminal 3: Local Tunnel for Grafana Access
+Use a third local terminal to open a Bastion-backed SSH tunnel, securely forwarding the isolated Grafana container to your local browser on `localhost:3000`.
+
+```bash
+az network bastion ssh \
+    --name "bas-${TARGET_ENV}" \
+    --resource-group "rg-dlq-msg-router-${TARGET_ENV}" \
+    --target-resource-id "$(az vm show --resource-group "rg-dlq-msg-router-${TARGET_ENV}" --name "vm-jumpbox-${TARGET_ENV}" --query id -o tsv)" \
+    --auth-type "ssh-key" \
+    --username "azureuser" \
+    --ssh-key ~/.ssh/dlq_jumpbox_rsa \
+    -- -L 3000:127.0.0.1:3000
 ```
 
 ---
@@ -190,56 +190,61 @@ bash ./infra/scripts/03-push-image.bash
 **Objective:** Deploy the agent to Azure Container Apps and bypass ephemeral storage restrictions.
 
 ### 1. Trap Resolution: The Identity Crash
-When mapping User-Assigned Managed Identities into Container Apps, the Python 'DefaultAzureCredential' defaults to System-Assigned, causing a fatal 'ClientAuthenticationError'. The Terraform configuration automatically resolves this by querying the exact 'client_id' and injecting it as 'AZURE_CLIENT_ID'.
+When mapping User-Assigned Managed Identities into Container Apps, the Python 'DefaultAzureCredential' defaults to System-Assigned, causing a fatal 'ClientAuthenticationError'. The Terraform configuration automatically resolves this by querying the 'client_id' and injecting it as 'AZURE_CLIENT_ID'.
 
-### 2. Trap Resolution: The Static Tag Trap
-Terraform will ignore the newly pushed image because the ACR tag remains statically set to 'v1.0.0'. To force Azure to pull the new code and generate a new deployment revision, modify a benign environment variable in the local `.env` file used by Terraform.
+*(Architectural Note: User-Assigned identity is deliberately utilised over System-Assigned to decouple RBAC assignments from the container lifecycle. This allows Terraform to establish secure permissions before the container is provisioned, preventing Infrastructure-as-Code race conditions).*
 
-Change the sleep timer value from `60` to `61`:
-```bash
-AGENT_CYCLE_SLEEP_SECONDS=61
-```
+### 2. Trap Resolution: Immutable Tag Rollout
+Terraform deploys the image tag declared in `infra/terraform/azure/environments/<env>/platform.tfvars` (`container_image_tag`).
+
+To roll out a new image revision, the pipeline must first build and push the updated image to the Azure Container Registry. Simply updating the variable in Terraform will not trigger a Docker build. Once the image is successfully pushed via the Phase 3 bash scripts, executing the Phase 4 deployment script will force Terraform to detect the tag change and deploy the new revision to the Container App.
 
 ### 3. Execute Deployment
-Return to the **local laptop terminal** and deploy the agent. Terraform will detect the altered `AGENT_CYCLE_SLEEP_SECONDS` variable and force a fresh container deployment.
+Return to **Terminal 1 (Local Control Plane - Return)** and deploy the agent once the image push has completed in Terminal 2.
 
-```powershell
-pwsh ./infra/scripts/04-deploy-agent.ps1
+**Architectural Note (Dynamic Variables):** The deployment module natively extracts `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE` and `AZURE_FOUNDRY_ENDPOINT` directly from the Terraform outputs. These are dynamically injected into the Azure Container App environment variables, preventing startup crashes.
+
+```bash
+bash ./infra/scripts/05-deploy-agent.sh -e "${TARGET_ENV}"
 ```
-
----
 
 ## Phase 5: Live Fire Simulation
 
-**Objective:** Inject synthetic enterprise traffic to validate schema auto-healing, duplicate dropping, and Azure Foundry fallback.
+**Objective:** Validate the deployed agent, Grafana dashboard, and simulator flow after Phase 05 completes.
 
 **Trap Resolution (Module Execution):** Running Python scripts directly via path triggers a 'ModuleNotFoundError' due to execution isolation. They must be executed as modules from the repository root.
 
-1. Open **two separate Bastion terminals** connected to the Jumpbox.
-2. In BOTH terminals, activate the virtual environment:
+1. Return to **Terminal 2 (Jumpbox Execution Plane)**. Ensure you are in the cloned repository and activate the virtual environment:
 
 ```bash
-cd ~/viva-dlq-agent
+cd ~/dlq-msg-router
 source .venv/bin/activate
 ```
 
-3. **Terminal 1 (Sanitise the Environment):** Flush all ghost messages from the Service Bus:
+2. Start Grafana in the same jumpbox session so the dashboard is available over the Bastion tunnel:
 
 ```bash
-python src/flush_queues.py
-````
+docker compose up -d grafana
+```
 
-4. **Terminal 1 (The Consumer):** Start the downstream application simulator:
+3. **Terminal 2 (Sanitise the Environment):** Flush all ghost messages from the Service Bus:
+
+```bash
+python -m src.flush_queues
+```
+4. **Terminal 2 (The Payload Cannon):** Dispatch the synthetic anomalies:
+
+```bash
+python -m simulator.producer
+```
+
+5. **Terminal 2 (The Consumer):** Start the downstream application simulator:
 
 ```bash
 python -m simulator.consumer
 ```
 
-5. **Terminal 2 (The Payload Cannon):** Dispatch the synthetic anomalies:
-
-```bash
-python -m simulator.producer
-```
+If you want to keep the consumer and producer live as separate processes during testing, open two jumpbox shells and run the consumer in one and the producer in the other.
 
 ---
 
@@ -248,14 +253,14 @@ python -m simulator.producer
 **Objective:** Extract the dashboard metrics via Log Analytics and destroy the billing meters whilst protecting the Terraform state.
 
 ### 1. Telemetry Extraction
-Navigate to the Log Analytics Workspace ('law-dev') in the Azure Portal. Run the following KQL query to extract the telemetry rows broadcasted by the agent, and select 'Export to CSV':
+Navigate to the Log Analytics Workspace (`law-${TARGET_ENV}`) in the Azure Portal. Run the following KQL query to extract the telemetry rows broadcasted by the agent, and select 'Export to CSV':
 
 ```kusto
 ContainerAppConsoleLogs_CL
-| where ContainerAppName_s == "ca-viva-dlq-agent-dev"
+| where ContainerAppName_s == "ca-dlq-msg-router-${TARGET_ENV}"
 | where Log_s startswith "CSV_EXPORT|"
 | extend csv_string = substring(Log_s, 11)
-| extend columns = split(csv_string, ",")
+| extend columns = parse_csv(csv_string)
 | project 
     timestamp = columns[0],
     source_queue = columns[1],
@@ -269,21 +274,24 @@ ContainerAppConsoleLogs_CL
     confidence_score = columns[9]
 | sort by todatetime(timestamp) desc
 ```
+For additional LAW KQL queries, see [OPERATOR_DASHBOARD_QUERIES](OPERATOR_DASHBOARD_QUERIES.md)
 
 ### 2. Infrastructure Teardown
-From the **local laptop terminal**, execute the teardown script to destroy all compute and networking resources. This script deliberately preserves the Storage Account and Key Vault so the remote memory remains intact.
+From the **local laptop terminal**, execute the teardown script to destroy all compute and networking resources. This standard execution deliberately preserves the Storage Account and Key Vault so the Terraform state remains intact.
 
-```powershell
-pwsh ./infra/scripts/99-destroy-all.ps1
+```bash
+bash ./infra/scripts/99-destroy-all.sh -e "${TARGET_ENV}"
 ```
 
-**Trap Resolution (The Bastion NSG Catch-22):** The teardown script will successfully delete the Virtual Network, but it will throw a '400 Bad Request' regarding 'nsg-azure-bastion'. This is a known Azure API race condition where Terraform attempts to delete mandatory security rules whilst Azure believes the Bastion subnet is still active.
+*(Architectural Note: If a complete eradication of the environment is required, including the underlying Terraform state files, Storage Account, and Key Vault, append the `--full-purge` flag to the command above).*
+
+**Trap Resolution (The Bastion NSG Catch-22):** The teardown script will successfully delete the Virtual Network, but it may throw a '400 Bad Request' regarding 'nsg-azure-bastion'. This is a known Azure API race condition where Terraform attempts to delete mandatory security rules whilst Azure believes the Bastion subnet is still active.
 
 To resolve this:
-1. Go to the Azure Portal and open 'rg-viva-dlq-dev'.
-2. Locate the orphaned Network Security Group ('nsg-azure-bastion') and click 'Delete' manually.
+1. Go to the Azure Portal and open `rg-dlq-msg-router-<env>`.
+2. Locate the orphaned Network Security Group (`nsg-azure-bastion`) and click 'Delete' manually.
 3. Run the destroy script one final time to purge the NSG from the local Terraform state cleanly:
 
-```powershell
-pwsh ./infra/scripts/99-destroy-all.ps1
+```bash
+bash ./infra/scripts/99-destroy-all.sh -e "${TARGET_ENV}"
 ```

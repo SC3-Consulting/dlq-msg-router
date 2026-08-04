@@ -135,21 +135,25 @@ ASB_SOURCES_FILE="data/asb_sources.json"
 Maintaining a hardcoded JSON array for hundreds of queues is an operational anti-pattern. This architecture addresses scale via:
 
 * **Dynamic Discovery:** Utilises the `ServiceBusAdministrationClient` to programmatically query the namespace on boot, automatically discovering all eligible queues.
-* **Exclusion Filters:** Utilises the `EXCLUDED_QUEUES` environment variable to blacklist specific topics or queues from the dynamic discovery process, isolating operational traffic.
+* **Exclusion Filters:** Utilises the `EXCLUDED_QUEUES` environment variable to denylist specific topics or queues from the dynamic discovery process, isolating operational traffic.
 * **Bounded Concurrency (Polling):** The agent does not assign a thread to every discovered DLQ simultaneously. Instead, it works through the discovered list using a fixed `ThreadPoolExecutor` up to the `MAX_CONCURRENT_QUEUES` limit. 
 * **```CRITICAL PATCH``` - Thread Pool Elevation:** The `ThreadPoolExecutor` is elevated *outside* the infinite polling loop. This prevents aggressive OS thread-churn (creating and destroying threads every 60 seconds). Once the active batch is processed across the persistent worker threads, the main thread yields the CPU via `AGENT_CYCLE_SLEEP_SECONDS` before polling again.
 
 ## Repository Layout
 
 ```text
-VIVA-DLQ-AGENT/
+DLQ-AGENT/
 ├── data/
 │   ├── asb_sources.json                    # Fallback queue definitions
 │   └── rules.json                          # Deterministic heuristic definitions
 ├── docs/
 │   ├── DEPLOYMENT_RUNBOOK.md               # Infrastructure IaC deployment guide
+    ├── DEMO.md                             # Demo specific KQL queries
+│   ├── OPERATOR_DASHBOARD_QUERIES.md       # Basic set of KQL LAW queries
 │   └── ops_guide.md                        # operations and maintenance 
 ├── infra/
+│   ├── local/
+│   │   └── servicebus-emulator             # Docker configuration for local Service Bus emulator
 │   ├── scripts/                            # Bash and PowerShell rollout automation
 │   └── terraform/                          
 │       └── azure/                          # Azure-specific Terraform root
@@ -174,6 +178,7 @@ VIVA-DLQ-AGENT/
 │           └── .terraform.lock.hcl
 ├── reports/
 │   └── telemetry_dashboard.csv             # Output generated during local execution
+├── scripts/                                # Various utility scripts          
 ├── simulator/
 │   ├── consumer.py                         # Generates downstream rejections
 │   └── producer.py                         # Injects synthetic anomalies
@@ -182,12 +187,16 @@ VIVA-DLQ-AGENT/
 │   ├── ai_client.py                        # Foundry/Ollama LLM factory
 │   ├── autonomous_dlq_classifier.py        # Core  5-gate pipeline logic
 │   ├── flush_queues.py                     # Administrative ASB sanitisation
+│   ├── local_smoke_test.py                 # Adhoc smoke test of a local deployment
+│   ├── resilience.py                       # Retry support
 │   ├── run_agent.py                        # Orchestrator and thread pool polling
+│   ├── run_with_dependency_checks.py       # Checks dependency health on start
 │   └── state_managers.py                   # Caching logic
 ├── tests/                                  # Pytest suite
 ├── .env.example
 ├── docker-compose.yml                      # Local environment orchestration
 ├── Dockerfile                              # Multi-stage production container
+├── Makefile                                # make support
 ├── pytest.ini                              # Pytest configuration and strict markers
 ├── README.md
 ├── requirements-dev.txt                    # CI/CD and linting dependencies
@@ -218,11 +227,11 @@ The output captured in Log Analytics demonstrates the full spectrum of the agent
 
 ```csv
 timestamp,source_queue,client_id,message_type,classification,pattern,status,occurrence_count,suggested_action,confidence_score
-2026-06-15T06:26:35.579083,viva-integration-queue,Zeta_Corp,PaymentRequest,Duplicate_Transaction,exact_correlation_match_in_cache,Dropped,2,N/A,N/A
-2026-06-15T06:26:32.908666,viva-integration-queue,Zeta_Corp,PaymentRequest,Delivery_Limit_Exceeded,consumer_crashed_repeatedly,Auto_Classified_From_Cache,1,retry,N/A
-2026-06-15T06:26:32.659152,viva-integration-queue,Theta_Corp,AccountSync,Schema_Validation_Failed,missing_field_customer_id,Auto_Classified_From_Cache,1,fix_and_retry,N/A
-2026-06-15T06:26:32.612080,viva-integration-queue,Omega_Corp,LegacySync,Business_Logic_Violation,unexpected_null_pointer,AI_Suggested_Rule_Pending_Approval,1,drop_and_notify,0.85
-2026-06-15T06:26:30.097801,viva-payment-queue,Beta_Corp,PaymentRequest,Resubmit_Limit_Exhausted,poison_pill_threshold_exceeded,Quarantined,1,N/A,N/A
+2026-06-15T06:26:35.579083,integration-queue,Zeta_Corp,PaymentRequest,Duplicate_Transaction,exact_correlation_match_in_cache,Dropped,2,N/A,N/A
+2026-06-15T06:26:32.908666,integration-queue,Zeta_Corp,PaymentRequest,Delivery_Limit_Exceeded,consumer_crashed_repeatedly,Auto_Classified_From_Cache,1,retry,N/A
+2026-06-15T06:26:32.659152,integration-queue,Theta_Corp,AccountSync,Schema_Validation_Failed,missing_field_customer_id,Auto_Classified_From_Cache,1,fix_and_retry,N/A
+2026-06-15T06:26:32.612080,integration-queue,Omega_Corp,LegacySync,Business_Logic_Violation,unexpected_null_pointer,AI_Suggested_Rule_Pending_Approval,1,drop_and_notify,0.85
+2026-06-15T06:26:30.097801,payments-queue,Beta_Corp,PaymentRequest,Resubmit_Limit_Exhausted,poison_pill_threshold_exhausted,Quarantined,1,N/A,N/A
 ```
 
 ## Documentation Index

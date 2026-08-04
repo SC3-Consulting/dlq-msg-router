@@ -10,8 +10,8 @@ variable "query_model" {
     capacity = optional(number, 1)
   })
   default = {
-    name     = "gpt-4o-mini"
-    version  = "2024-07-18"
+    name     = "gpt-5-mini"
+    version  = "2025-08-07"
     capacity = 1
   }
 }
@@ -19,4 +19,16 @@ variable "query_model" {
 variable "enable_model_deployments" {
   type    = bool
   default = false
+}
+
+variable "foundry_name_seed" {
+  type        = string
+  description = "Seed used in random name keepers to allow controlled Foundry name rotation."
+  default     = "v2"
+}
+
+variable "foundry_ready_wait_duration" {
+  type        = string
+  description = "Delay after Cognitive Account creation before dependent resources are provisioned."
+  default     = "120s"
 }

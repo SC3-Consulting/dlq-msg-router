@@ -10,6 +10,7 @@ import os
 import json
 import time
 import logging
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from azure.servicebus import ServiceBusReceiveMode
 from azure.identity import DefaultAzureCredential
@@ -21,7 +22,87 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s')
 logger = logging.getLogger("IntegrationConsumer")
 
+
+def _resolve_service_bus_namespace() -> str:
+    """Resolves Service Bus namespace from env first, then Terraform output fallback.
+
+    Returns:
+        str: Fully qualified Service Bus namespace, or empty string when unavailable.
+    """
+    namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE", "").strip()
+    if namespace and "your-namespace-here" not in namespace:
+        return namespace
+
+    try:
+        terraform_output = subprocess.check_output(
+            [
+                "terraform",
+                "-chdir=infra/terraform/azure",
+                "output",
+                "-raw",
+                "servicebus_namespace_fqdn",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        ).strip()
+        if terraform_output:
+            logger.info(
+                "Using SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE from Terraform output."
+            )
+            return terraform_output
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    return namespace
+
+
+def _to_text(value) -> str:
+    """Converts a value to a UTF-8 string, handling bytes and other types.
+
+    Args:
+        value: The value to convert.
+
+    Returns:
+        str: The UTF-8 string representation of the value.
+    """
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _message_body_to_text(message) -> str:
+    """Converts the body of a Service Bus message to a UTF-8 string.
+
+    Args:
+        message: The Service Bus message.
+
+    Returns:
+        str: The UTF-8 string representation of the message body.
+    """
+    try:
+        body = message.body
+        if isinstance(body, (bytes, bytearray)):
+            return bytes(body).decode("utf-8", errors="replace")
+
+        if body is None:
+            return ""
+
+        return b"".join(
+            chunk if isinstance(chunk, bytes) else _to_text(chunk).encode("utf-8")
+            for chunk in body
+        ).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
 def process_queue(queue_name: str, fully_qualified_namespace: str, credential: DefaultAzureCredential) -> None:
+    """Processes messages from a Service Bus queue.
+
+    Args:
+        queue_name: The name of the queue to process.
+        fully_qualified_namespace: The fully qualified Service Bus namespace.
+        credential: The Azure credential to use for authentication.
+    """
     if shutdown_event.is_set():
         return
 
@@ -42,12 +123,12 @@ def process_queue(queue_name: str, fully_qualified_namespace: str, credential: D
                     try:
                         message_type = ""
                         if message.application_properties and b"message_type" in message.application_properties:
-                            message_type = message.application_properties[b"message_type"].decode('utf-8')
+                            message_type = _to_text(message.application_properties[b"message_type"])
                         elif message.application_properties and "message_type" in message.application_properties:
-                            message_type = message.application_properties["message_type"]
+                            message_type = _to_text(message.application_properties["message_type"])
 
                         try:
-                            raw_payload = b"".join(message.body).decode('utf-8', errors='replace')
+                            raw_payload = _message_body_to_text(message)
                             payload = json.loads(raw_payload)
                         except json.JSONDecodeError:
                             thread_logger.error(f"Rejecting {message.message_id}: Malformed JSON")
@@ -100,9 +181,10 @@ def process_queue(queue_name: str, fully_qualified_namespace: str, credential: D
 
 
 def main() -> None:
-    fully_qualified_namespace = os.getenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE")
+    """Main function to start the consumer threads for all target queues."""
+    fully_qualified_namespace = _resolve_service_bus_namespace()
     if not fully_qualified_namespace:
-        logger.error("Missing SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE in .env")
+        logger.error("Missing SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE in environment settings")
         return
 
     credential = DefaultAzureCredential()

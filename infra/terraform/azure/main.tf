@@ -62,6 +62,7 @@ module "foundry" {
   resource_group_name       = module.foundation.resource_group_name
   location                  = var.location
   suffix                    = var.environment
+  query_model               = var.query_model
   delegated_agent_subnet_id = module.network.agent_subnet_id
   enable_model_deployments  = true
 }
@@ -73,6 +74,7 @@ module "private_endpoints" {
   private_endpoint_subnet_id = module.network.private_endpoint_subnet_id
   private_dns_zone_ids       = module.dns.private_dns_zone_ids
   foundry_account_id         = module.foundry.foundry_account_id
+  foundry_account_name       = module.foundry.foundry_account_name
   acr_id                     = module.data_services.acr_id
   service_bus_id             = module.data_services.service_bus_id
 }
@@ -87,7 +89,13 @@ module "identity" {
     acr           = module.data_services.acr_id
     service_bus   = module.data_services.service_bus_id
     log_analytics = module.observability.log_analytics_workspace_id
+    state_backend = data.azurerm_storage_account.state_backend.id
   }
+}
+
+data "azurerm_storage_account" "state_backend" {
+  name                = regex("storage_account_name\\s*=\\s*\"([^\"]+)\"", file("${path.module}/environments/${var.environment}/backend.hcl"))[0]
+  resource_group_name = regex("resource_group_name\\s*=\\s*\"([^\"]+)\"", file("${path.module}/environments/${var.environment}/backend.hcl"))[0]
 }
 
 module "bastion_jumpbox" {
@@ -109,17 +117,42 @@ data "azurerm_user_assigned_identity" "agent" {
   depends_on          = [module.identity]
 }
 
+data "azurerm_key_vault_secret" "app_env_secret" {
+  for_each     = local.use_key_vault_jumpbox_key ? var.app_secret_env_var_secret_names : {}
+  name         = each.value
+  key_vault_id = data.azurerm_key_vault.bootstrap[0].id
+}
+
+locals {
+  app_secret_env_var_secret_ids = {
+    for env_name, secret_name in var.app_secret_env_var_secret_names :
+    env_name => data.azurerm_key_vault_secret.app_env_secret[env_name].id
+    if local.use_key_vault_jumpbox_key
+  }
+}
 module "agent_hosting" {
-  source                     = "./modules/agent_hosting"
-  resource_group_name        = module.foundation.resource_group_name
-  location                   = var.location
-  suffix                     = var.environment
-  delegated_agent_subnet_id  = module.network.container_apps_subnet_id
-  log_analytics_workspace_id = module.observability.log_analytics_workspace_id
-  acr_login_server           = module.data_services.acr_login_server
-  agent_runtime_identity_id  = module.identity.agent_runtime_identity_id
-  app_env_vars               = var.app_env_vars
-  agent_client_id            = data.azurerm_user_assigned_identity.agent.client_id
+  source                        = "./modules/agent_hosting"
+  resource_group_name           = module.foundation.resource_group_name
+  location                      = var.location
+  suffix                        = var.environment
+  delegated_agent_subnet_id     = module.network.container_apps_subnet_id
+  log_analytics_workspace_id    = module.observability.log_analytics_workspace_id
+  acr_login_server              = module.data_services.acr_login_server
+  agent_runtime_identity_id     = module.identity.agent_runtime_identity_id
+  app_env_vars                  = merge(
+    var.app_env_vars,
+    {
+      SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE = module.data_services.servicebus_namespace_fqdn
+      AZURE_FOUNDRY_ENDPOINT               = module.foundry.foundry_endpoint
+    }
+  )
+  app_secret_env_var_secret_ids = local.app_secret_env_var_secret_ids
+  container_image_tag           = var.container_image_tag
+  container_cpu                 = var.agent_container_cpu
+  container_memory              = var.agent_container_memory
+  min_replicas                  = var.agent_min_replicas
+  max_replicas                  = var.agent_max_replicas
+  agent_client_id               = data.azurerm_user_assigned_identity.agent.client_id
 }
 
 variable "jumpbox_ssh_public_key_secret_name" {

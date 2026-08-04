@@ -6,5 +6,6 @@ variable "private_dns_zone_ids" {
   default = {}
 }
 variable "foundry_account_id" { type = string }
+variable "foundry_account_name" { type = string }
 variable "acr_id" { type = string }
 variable "service_bus_id" { type = string }
