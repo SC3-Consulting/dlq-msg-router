@@ -32,6 +32,8 @@ Azure Container Apps utilise ephemeral storage. Extracting a physical CSV file (
 
 The chosen solution enforces a **Report-to-Log pattern**. The orchestrator (`src/run_agent.py`) intercepts the generation of CSV rows and prints them to standard output with a strict `CSV_EXPORT|` prefix. This data is ingested securely by the integrated Azure Log Analytics workspace, where it can be natively queried and exported without requiring direct container interaction.
 
+Operational visualisation is now provided by a Grafana container hosted on the Ubuntu jumpbox and bound to the loopback interface only. Operators access the dashboard through Azure Bastion SSH tunnelling using local port forwarding from `3000` to `127.0.0.1:3000` on the jumpbox. Grafana queries Azure Monitor and the Log Analytics workspace using passwordless authentication, utilising the existing User-Assigned Managed Identity model.
+
 ### 3. AMQP Connection Multiplexing & Thread Safety
 The Azure Python SDK for Service Bus can experience severe socket exhaustion and `amqp:connection:forced` crashes if multiple threads attempt to instantiate separate underlying AMQP 1.0 connections simultaneously. 
 
@@ -105,6 +107,8 @@ graph TD
     I -->|drop_and_notify / drop| H
     
     D -.->|Stream CSV_EXPORT| M[Azure Log Analytics]
+    N[Grafana on Jumpbox Loopback] -->|Query| M
+    O[Operator Workstation] -->|Azure Bastion SSH tunnelling -L 3000:127.0.0.1:3000| N
 
 ```
 ## Multi-Queue Configuration and Scalability
@@ -148,9 +152,9 @@ DLQ-AGENT/
 │   └── rules.json                          # Deterministic heuristic definitions
 ├── docs/
 │   ├── DEPLOYMENT_RUNBOOK.md               # Infrastructure IaC deployment guide
-    ├── DEMO.md                             # Demo specific KQL queries
+│   ├── DEMO.md                             # Demo-specific KQL queries
 │   ├── OPERATOR_DASHBOARD_QUERIES.md       # Basic set of KQL LAW queries
-│   └── ops_guide.md                        # operations and maintenance 
+│   └── ops_guide.md                        # Operations and maintenance
 ├── infra/
 │   ├── local/
 │   │   └── servicebus-emulator             # Docker configuration for local Service Bus emulator
@@ -176,6 +180,12 @@ DLQ-AGENT/
 │           ├── variables.tf                # Global input variable definitions
 │           ├── versions.tf                 # Terraform provider version constraints
 │           └── .terraform.lock.hcl
+├── ops/                                    # Operational configurations (Grafana)
+│   └── observability/
+│       └── grafana/                        # Jumpbox-hosted Grafana stack
+│           ├── dashboards/                 # JSON dashboard definitions (e.g., DLQ telemetry)
+│           ├── provisioning/               # Declarative YAML for datasources and providers
+│           └── scripts/                    # Runtime initialization and variable injection
 ├── reports/
 │   └── telemetry_dashboard.csv             # Output generated during local execution
 ├── scripts/                                # Various utility scripts          
