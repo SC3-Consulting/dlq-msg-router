@@ -232,7 +232,7 @@ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyr
 sudo chmod a+r /etc/apt/keyrings/docker.asc
 
 . /etc/os-release
-DOCKER_CODENAME="\${UBUNTU_CODENAME:-\${VERSION_CODENAME:-}}"
+ DOCKER_CODENAME="\${UBUNTU_CODENAME:-\${VERSION_CODENAME:-}}"
 if [[ -z "\${DOCKER_CODENAME}" ]]; then
   echo "[-] Error: Unable to resolve Ubuntu codename for Docker APT repository setup." >&2
   exit 1

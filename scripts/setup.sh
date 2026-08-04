@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 ##########################
 # setup.sh
@@ -10,8 +10,9 @@
 #
 ##########################
 
-# Exit immediately if a command exits with a non-zero status
-set -e
+# Exit immediately if a command exits with a non-zero status, treat unset variables as errors,
+# and propagate pipeline failures.
+set -euo pipefail
 
 # ANSI colour codes for clean, professional terminal output
 GREEN='\033[0;32m'
@@ -24,13 +25,13 @@ echo -e " DLQ Smart Triage Router - Infrastructure Setup"
 echo -e "======================================================${NC}"
 
 # 1. Dependency Check: Verify Python 3
-if ! command -v python3 &> /dev/null; then
+if ! command -v python3 >/dev/null 2>&1; then
     echo -e "${RED}[ERROR] Python3 is not installed. Please install Python 3.10+${NC}"
     exit 1
 fi
 
 # 2. Virtual Environment Lifecycle
-if [ ! -d ".venv" ]; then
+if [[ ! -d ".venv" ]]; then
     echo -e "${GREEN}[INFO] Creating Python virtual environment...${NC}"
     python3 -m venv .venv
 else
@@ -51,16 +52,16 @@ pip install -r requirements.txt > /dev/null
 REQUIRED_DIRS=("data" "reports" "simulator" "src" "tests")
 
 for dir in "${REQUIRED_DIRS[@]}"; do
-    if [ ! -d "$dir" ]; then
+    if [[ ! -d "$dir" ]]; then
         echo -e "${BLUE}[INFO] Creating missing directory: $dir${NC}"
         mkdir -p "$dir"
     fi
 done
 
 # 6. Environment Configuration
-if [ ! -f ".env" ]; then
+if [[ ! -f ".env" ]]; then
     echo -e "${RED}[WARN] .env file not found. Creating from .env.example...${NC}"
-    if [ -f ".env.example" ]; then
+    if [[ -f ".env.example" ]]; then
         cp .env.example .env
         echo -e "${GREEN}[INFO] Please update your .env with your Azure/Ollama credentials.${NC}"
     fi

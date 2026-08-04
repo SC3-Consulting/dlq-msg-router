@@ -4,6 +4,22 @@ This document outlines the step-by-step procedures for provisioning the secure, 
 
 Every command, operational trap, and environmental patch required to deploy the required infrastructure and agent is documented below.
 
+## Execution Model
+
+Use these three terminals consistently throughout the deployment:
+
+1. Terminal 1 (Local Control Plane): run Phases 01, 02, and 03 from your workstation.
+2. Terminal 2 (Jumpbox Execution Plane): open the Bastion SSH session, then run Phase 04, start Grafana, and execute the simulators after Phase 05 completes.
+3. Terminal 3 (Local Tunnel): open the Bastion-backed port-forwarded SSH session for Grafana access on `localhost:3000`.
+
+Set these once before you begin:
+
+```bash
+export TARGET_ENV="<target-environment>"
+export TARGET_BRANCH="<target-branch>"
+export TARGET_LOCATION="australiaeast"
+```
+
 ## Architectural Context & Permission Constraints
 
 To adhere to strict enterprise security mandates, the deployment is orchestrated via either PowerShell wrappers or Bash scripts. This ensures secure injection of CLI credentials without exposing sensitive variables to version control. 
@@ -62,15 +78,13 @@ az login --use-device-code
 az account set --subscription "My Subscription Name"
 ```
 
-1b. If need to create the resource group and have permissions to do so:
+1b. If you need to create the resource group and have permissions to do so:
 
 ```bash
-# check if resource group exists
-TARGET_ENV="dev" # or test or prod
-TARGET_LOCATION="australiaeast"
+# Check whether the resource group exists.
 az group show --name "rg-dlq-msg-router-${TARGET_ENV}"
 
-# if does not exist, create (assuming you have permissions to do so within the subscription)
+# If it does not exist, create it (assuming you have permission to do so within the subscription).
 az group create --name "rg-dlq-msg-router-${TARGET_ENV}" --location "${TARGET_LOCATION}"
 ```
 
@@ -89,8 +103,6 @@ az keyvault purge --name <kvtfstatexxxxxx> --location australiaeast
 1. Execute the Phase 1 Bash orchestrator from your local repository root:
 
 ```bash
-TARGET_ENV="dev" # or test or prod
-TARGET_LOCATION="australiaeast"
 bash ./infra/scripts/01-bootstrap.sh -e "${TARGET_ENV}" -l "${TARGET_LOCATION}"
 ```
 
@@ -117,7 +129,7 @@ bash ./infra/scripts/02-deploy-network-and-data.sh -e "${TARGET_ENV}"
 ```bash
 git add .
 git commit -m "Phase 2: IaC modules, runbooks, and strict repo cleanup"
-git push
+git push origin "${TARGET_BRANCH}"
 ```
 
 ---
@@ -126,45 +138,50 @@ git push
 
 **Objective:** Securely automate the jumpbox configuration via an Azure Bastion Native Client tunnel, inject the dynamic environment variables, and push the Docker image.
 
-### 1. Automate Jumpbox Provisioning
-The Jumpbox is a naked Ubuntu instance. We utilise a Bash script to establish a secure Bastion SSH tunnel. The script automatically installs `docker.io`, `python3-venv`, and `terraform`, clones the repository, and dynamically generates the simulator `.env` file using Terraform state outputs.
-
-TODO: Fix numeric ordering of scripts to reflect order they are to be run in.
-
-export TARGET_BRANCH="main" # Change this if testing on a different branch
-bash ./infra/scripts/03-configure-jumpbox.sh -e "${TARGET_ENV}"
-
-Execute this from your **local laptop terminal**:
+### Terminal 1: Configure the Jumpbox from the Local Control Plane
+The Jumpbox is a naked Ubuntu instance. Use the local shell to open the Bastion SSH session and let the script install `docker.io`, `python3-venv`, and `terraform`, clone the repository, and generate the jumpbox runtime files from Terraform state.
 
 ```bash
+export TARGET_BRANCH="<target-branch>"
 bash ./infra/scripts/03-configure-jumpbox.sh -e "${TARGET_ENV}"
 ```
-### 2. Connect via Bastion & Push the Image
-Once the provisioning script completes successfully, use the Azure CLI to tunnel directly into the Jumpbox. 
+
+### Terminal 2: Bastion SSH Session and Image Push
+Once Phase 03 completes, open the Bastion SSH session to the jumpbox and keep this terminal open for the jumpbox execution plane.
 
 ```bash
-TARGET_ENV="dev"
-az network bastion ssh --name "bas-${TARGET_ENV}" --resource-group "rg-dlq-msg-router-${TARGET_ENV}" --target-resource-id $(az vm show --resource-group "rg-dlq-msg-router-${TARGET_ENV}" --name "vm-jumpbox-${TARGET_ENV}" --query id -o tsv) --auth-type "ssh-key" --username "azureuser" --ssh-key ~/.ssh/dlq_jumpbox_rsa
+az network bastion ssh \
+    --name "bas-${TARGET_ENV}" \
+    --resource-group "rg-dlq-msg-router-${TARGET_ENV}" \
+    --target-resource-id "$(az vm show --resource-group "rg-dlq-msg-router-${TARGET_ENV}" --name "vm-jumpbox-${TARGET_ENV}" --query id -o tsv)" \
+    --auth-type "ssh-key" \
+    --username "azureuser" \
+    --ssh-key ~/.ssh/dlq_jumpbox_rsa
 ```
-Fallback manual workflow if script fails to run:
-1. Navigate to the Azure Portal.
-2. Open `vm-jumpbox-<env>` and select 'Connect' -> 'Bastion'.
-3. Username: 'azureuser'
-4. Authentication Type: 'SSH Private Key from Local File'.
-5. Upload the private key (`~/.ssh/dlq_jumpbox_rsa` - select the file WITHOUT the `.pub` extension).
-6. Uncheck 'Open in new browser tab', then click 'Connect'.
 
-Then while still on the jumpbox, execute the image push. *(Note: The Jumpbox Managed Identity has been granted the `Storage Blob Data Contributor` role, allowing it to seamlessly read the remote state and retrieve the ACR credentials).*
-
-**RBAC Propagation Note:** New or recently changed role assignments can take a short time to become effective. If `04-push-image.bash` fails during Terraform backend initialisation with a `403 AuthorizationPermissionMismatch`, wait 1-2 minutes and retry the command.
+Then, from inside the jumpbox session, push the image:
 
 ```bash
-cd dlq-msg-router
-TARGET_ENV="dev"
+cd ~/dlq-msg-router
 bash ./infra/scripts/04-push-image.bash -e "${TARGET_ENV}"
 ```
+RBAC Propagation Note: New or recently changed role assignments can take a short time to become effective. If `04-push-image.bash` fails during Terraform backend initialisation with a `403 AuthorizationPermissionMismatch`, wait 1-2 minutes and retry the command.
 
-Once the image push completes, type `exit` to return to your local terminal.
+Once the image push completes, keep the Bastion session available for Phase 05 validation, Grafana startup, and simulator execution.
+
+### Terminal 3: Local Tunnel for Grafana Access
+Use a third local terminal to open a Bastion-backed SSH tunnel, securely forwarding the isolated Grafana container to your local browser on `localhost:3000`.
+
+```bash
+az network bastion ssh \
+    --name "bas-${TARGET_ENV}" \
+    --resource-group "rg-dlq-msg-router-${TARGET_ENV}" \
+    --target-resource-id "$(az vm show --resource-group "rg-dlq-msg-router-${TARGET_ENV}" --name "vm-jumpbox-${TARGET_ENV}" --query id -o tsv)" \
+    --auth-type "ssh-key" \
+    --username "azureuser" \
+    --ssh-key ~/.ssh/dlq_jumpbox_rsa \
+    -- -L 3000:127.0.0.1:3000
+```
 
 ---
 
@@ -183,7 +200,7 @@ Terraform deploys the image tag declared in `infra/terraform/azure/environments/
 To roll out a new image revision, the pipeline must first build and push the updated image to the Azure Container Registry. Simply updating the variable in Terraform will not trigger a Docker build. Once the image is successfully pushed via the Phase 3 bash scripts, executing the Phase 4 deployment script will force Terraform to detect the tag change and deploy the new revision to the Container App.
 
 ### 3. Execute Deployment
-Return to the **local laptop terminal** and deploy the agent. 
+Return to **Terminal 1 (Local Control Plane - Return)** and deploy the agent once the image push has completed in Terminal 2.
 
 **Architectural Note (Dynamic Variables):** The deployment module natively extracts `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE` and `AZURE_FOUNDRY_ENDPOINT` directly from the Terraform outputs. These are dynamically injected into the Azure Container App environment variables, preventing startup crashes.
 
@@ -193,36 +210,41 @@ bash ./infra/scripts/05-deploy-agent.sh -e "${TARGET_ENV}"
 
 ## Phase 5: Live Fire Simulation
 
-**Objective:** Inject synthetic enterprise traffic to validate schema auto-healing, duplicate dropping, and Azure Foundry fallback.
+**Objective:** Validate the deployed agent, Grafana dashboard, and simulator flow after Phase 05 completes.
 
 **Trap Resolution (Module Execution):** Running Python scripts directly via path triggers a 'ModuleNotFoundError' due to execution isolation. They must be executed as modules from the repository root.
 
+1. Return to **Terminal 2 (Jumpbox Execution Plane)**. Ensure you are in the cloned repository and activate the virtual environment:
 
-1. Open **two separate Bastion terminals** connected to the Jumpbox.
-2. In BOTH terminals, activate the virtual environment:
-
-```
+```bash
 cd ~/dlq-msg-router
 source .venv/bin/activate
 ```
 
-3. **Terminal 1 (Sanitise the Environment):** Flush all ghost messages from the Service Bus:
+2. Start Grafana in the same jumpbox session so the dashboard is available over the Bastion tunnel:
+
+```bash
+docker compose up -d grafana
+```
+
+3. **Terminal 2 (Sanitise the Environment):** Flush all ghost messages from the Service Bus:
 
 ```bash
 python -m src.flush_queues
 ```
+4. **Terminal 2 (The Payload Cannon):** Dispatch the synthetic anomalies:
 
-4. **Terminal 1 (The Consumer):** Start the downstream application simulator:
+```bash
+python -m simulator.producer
+```
+
+5. **Terminal 2 (The Consumer):** Start the downstream application simulator:
 
 ```bash
 python -m simulator.consumer
 ```
 
-5. **Terminal 2 (The Payload Cannon):** Dispatch the synthetic anomalies:
-
-```bash
-python -m simulator.producer
-```
+If you want to keep the consumer and producer live as separate processes during testing, open two jumpbox shells and run the consumer in one and the producer in the other.
 
 ---
 
@@ -231,11 +253,11 @@ python -m simulator.producer
 **Objective:** Extract the dashboard metrics via Log Analytics and destroy the billing meters whilst protecting the Terraform state.
 
 ### 1. Telemetry Extraction
-Navigate to the Log Analytics Workspace (`law-<env>`) in the Azure Portal. Run the following KQL query to extract the telemetry rows broadcasted by the agent, and select 'Export to CSV':
+Navigate to the Log Analytics Workspace (`law-${TARGET_ENV}`) in the Azure Portal. Run the following KQL query to extract the telemetry rows broadcasted by the agent, and select 'Export to CSV':
 
 ```kusto
 ContainerAppConsoleLogs_CL
-| where ContainerAppName_s == "ca-dlq-msg-router-<env>"
+| where ContainerAppName_s == "ca-dlq-msg-router-${TARGET_ENV}"
 | where Log_s startswith "CSV_EXPORT|"
 | extend csv_string = substring(Log_s, 11)
 | extend columns = parse_csv(csv_string)

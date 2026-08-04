@@ -1,5 +1,7 @@
 # Stakeholder Demo Guide: Telemetry and Observability
 
+> Architectural note: this document is a fallback operational guide for users who prefer querying the Azure Log Analytics Workspace directly with KQL instead of using the Jumpbox-hosted Grafana dashboard.
+
 This guide provides presentation-ready KQL queries for demonstrating the DLQ telemetry pipeline in Azure Log Analytics.
 
 All JSON-based queries below use robust marker parsing:
