@@ -229,7 +229,7 @@ resource "azurerm_network_security_rule" "agent_outbound_azure_monitor" {
   destination_address_prefix  = "AzureMonitor"
   resource_group_name         = var.resource_group_name
   network_security_group_name = azurerm_network_security_group.agent.name
-} 
+}
 
 resource "azurerm_network_security_rule" "agent_outbound_virtual_network" {
   name                        = "allow-virtual-network-outbound"

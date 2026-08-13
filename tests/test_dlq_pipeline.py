@@ -806,7 +806,7 @@ def test_azure_foundry_engine_execution(mock_azure_client, monkeypatch):
     """Proves the Azure Foundry AI engine correctly formats and parses responses."""
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
     monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
-    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-4o")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5.4")
 
     engine = AIEngineFactory.get_engine()
     assert isinstance(engine, AzureFoundryEngine)
@@ -833,7 +833,7 @@ def test_azure_foundry_engine_retries_with_max_completion_tokens(
     """Proves compatibility retry for models that reject max_tokens."""
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
     monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
-    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5.4")
     monkeypatch.setenv("AZURE_FOUNDRY_MAX_TOKENS", "1200")
 
     engine = AIEngineFactory.get_engine()
@@ -881,7 +881,7 @@ def test_azure_foundry_engine_retries_on_rate_limit(
     """Proves transient rate limits are retried before failing open."""
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
     monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
-    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5.4")
     monkeypatch.setenv("AZURE_FOUNDRY_TRANSIENT_RETRIES", "2")
 
     engine = AIEngineFactory.get_engine()
@@ -897,7 +897,7 @@ def test_azure_foundry_engine_retries_on_rate_limit(
 
     cast(Any, azure_engine.client).complete.side_effect = [
         Exception(
-            "(rate_limit_exceeded) Your requests to gpt-5-mini have exceeded rate limit."
+            "(rate_limit_exceeded) Your requests to gpt-5.4 have exceeded rate limit."
         ),
         mock_response,
     ]
@@ -920,7 +920,7 @@ def test_azure_foundry_engine_retries_on_empty_response(
     """Proves empty model payloads are retried as transient responses."""
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
     monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
-    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5.4")
     monkeypatch.setenv("AZURE_FOUNDRY_TRANSIENT_RETRIES", "2")
 
     engine = AIEngineFactory.get_engine()
@@ -958,7 +958,7 @@ def test_azure_foundry_engine_retries_without_temperature_on_unsupported_value(
     """Proves fallback to model default temperature when explicit value is rejected."""
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
     monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
-    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5.4")
     monkeypatch.setenv("AZURE_FOUNDRY_TEMPERATURE", "0.1")
 
     engine = AIEngineFactory.get_engine()
@@ -1001,7 +1001,7 @@ def test_azure_foundry_engine_retries_without_response_format_on_empty_content(
     """Proves fallback when json_object mode returns empty content repeatedly."""
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
     monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
-    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5.4")
 
     engine = AIEngineFactory.get_engine()
     assert isinstance(engine, AzureFoundryEngine)
@@ -1043,7 +1043,7 @@ def test_azure_foundry_engine_retries_with_higher_tokens_on_reasoning_exhaustion
     """Proves token budget is boosted when reasoning consumes the entire completion budget."""
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
     monkeypatch.setenv("AZURE_FOUNDRY_ENDPOINT", "https://mock.com")
-    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5.4")
     monkeypatch.setenv("AZURE_FOUNDRY_MAX_TOKENS", "1200")
     monkeypatch.setenv("AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS", "2400")
 
@@ -1093,13 +1093,13 @@ def test_azure_foundry_engine_normalizes_base_endpoint(mock_azure_client, monkey
         "AZURE_FOUNDRY_ENDPOINT",
         "https://foundry-dlq-msg-router-99.cognitiveservices.azure.com/",
     )
-    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5-mini")
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-5.4")
 
     engine = AIEngineFactory.get_engine()
     assert isinstance(engine, AzureFoundryEngine)
     azure_engine = cast(AzureFoundryEngine, engine)
 
-    assert azure_engine.endpoint.endswith("/openai/deployments/gpt-5-mini")
+    assert azure_engine.endpoint.endswith("/openai/deployments/gpt-5.4")
 
 
 def test_fix_and_retry_fallback_escalation(mock_infrastructure):
@@ -1184,8 +1184,11 @@ def test_flush_queues_missing_namespace(monkeypatch):
 
     monkeypatch.delenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE", raising=False)
 
-    with patch.object(fq.logger, "error") as mock_error:
-        fq.main()
+    with patch(
+        "src.flush_queues.subprocess.check_output", side_effect=FileNotFoundError()
+    ):
+        with patch.object(fq.logger, "error") as mock_error:
+            fq.main()
 
     mock_error.assert_called_once_with(
         "Missing SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE in environment settings"

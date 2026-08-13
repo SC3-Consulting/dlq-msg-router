@@ -13,7 +13,11 @@ import time
 import urllib.request
 import uuid
 
-from azure.servicebus import ServiceBusClient, ServiceBusMessage, ServiceBusReceiveMode
+from azure.servicebus import (
+    ServiceBusClient,
+    ServiceBusMessage,
+    ServiceBusReceiveMode,
+)
 
 
 def _get_json(url):

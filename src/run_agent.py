@@ -20,13 +20,21 @@ from typing import Dict, List, Optional, Union
 
 from azure.core.exceptions import ClientAuthenticationError, HttpResponseError
 from azure.identity import DefaultAzureCredential
-from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode, ServiceBusSubQueue
+from azure.servicebus import (
+    ServiceBusClient,
+    ServiceBusReceiveMode,
+    ServiceBusSubQueue,
+)
 from azure.servicebus.management import ServiceBusAdministrationClient
 from dotenv import load_dotenv
 
 from src.ai_client import AIEngineFactory
 from src.autonomous_dlq_classifier import AutonomousDLQClassifier
-from src.resilience import CircuitBreaker, CircuitBreakerOpenError, backoff_sleep
+from src.resilience import (
+    CircuitBreaker,
+    CircuitBreakerOpenError,
+    backoff_sleep,
+)
 from src.state_managers import ClassificationCache, IdempotencyStore
 
 # Configure enterprise logging standard

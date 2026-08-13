@@ -8,8 +8,8 @@ variable "agent_runtime_identity_name_override" {
   default     = ""
 }
 
-variable "scope_ids" { 
-  type = map(string) 
+variable "scope_ids" {
+  type = map(string)
 }
 
 variable "tags" {
