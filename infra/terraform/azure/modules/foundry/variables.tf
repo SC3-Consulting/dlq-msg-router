@@ -10,7 +10,7 @@ variable "query_model" {
     capacity = optional(number, 1)
   })
   default = {
-    name     = "gpt-5-mini"
+    name     = "gpt-5.1-chat"
     version  = "2025-08-07"
     capacity = 1
   }

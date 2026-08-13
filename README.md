@@ -52,7 +52,7 @@ To ensure strict payload security and deterministic routing, every Dead Letter m
 2. **Gate B: Idempotency Store** - Prevents infinite processing loops by hashing message correlation IDs and dropping exact duplicates via a local SQLite cache.
 3. **Gate C: Classification Cache** - Bypasses AI and heuristic engines for identical error shapes processed within the Time-To-Live (TTL) window, ensuring rapid processing of identical system outages.
 4. **Gate D: Heuristics Engine** - Evaluates messages against deterministic JSON rules mapping specific patterns to safe resolution actions.
-5. **Gate E: AI Fallback** - Unknown anomalies are routed securely via Private Endpoints to the Azure AI Foundry model (`gpt-4o-mini`) for rule suggestion, followed by quarantine in a human-review Parking Lot queue.
+5. **Gate E: AI Fallback** - Unknown anomalies are routed securely via Private Endpoints to the Azure AI Foundry model (gpt-5.1-chat) for rule suggestion, followed by quarantine in a human-review Parking Lot queue.
 
 ## Classification Patterns and Actions
 
@@ -218,7 +218,7 @@ DLQ-AGENT/
 The agent operates silently in the background, waking on a defined interval to process queued anomalies concurrently across multiple threads. It successfully parses anomalies, executes automated structural fixes, and interfaces with the Azure Foundry Private Endpoint for unknown classifications.
 
 ### Agent Container Console Trace
-The following execution trace demonstrates the agent healing schema validation failures and executing successful requests to Azure Foundry (`gpt-4o-mini`) via zero-trust managed identities:
+The following execution trace demonstrates the agent healing schema validation failures and executing successful requests to Azure Foundry (gpt-5.1-chat) via zero-trust managed identities:
 
 ```text
 2026-06-14 21:37:33,307 - INFO - [ThreadPoolExecutor-0_0] - ManagedIdentityCredential.get_token succeeded
@@ -228,7 +228,7 @@ The following execution trace demonstrates the agent healing schema validation f
 2026-06-14 21:37:34,171 - INFO - [ThreadPoolExecutor-0_1] - Structural fix applied: Injected 'transaction_amount' with strongly-typed value '0.0' (float).
 2026-06-14 21:37:34,172 - INFO - [ThreadPoolExecutor-0_0] - Successfully auto-healed and resubmitted message 521169e2-746d-415c-8f04-7f202c6820f3.
 ...
-2026-06-14 21:37:34,270 - INFO - [ThreadPoolExecutor-0_1] - Invoking Azure Foundry model: gpt-4o-mini for client: Omega_Corp
+2026-06-14 21:37:34,270 - INFO - [ThreadPoolExecutor-0_1] - Invoking Azure Foundry model: gpt-5.1-chat for client: Omega_Corp
 2026-06-14 21:37:35,161 - INFO - [ThreadPoolExecutor-0_1] - Response status: 200
 ```
 

@@ -15,27 +15,33 @@ agent_min_replicas           = 1
 agent_max_replicas           = 2
 
 app_env_vars = {
-  ENABLE_DYNAMIC_DISCOVERY      = "True"
-  EXCLUDED_QUEUES               = "parking-lot-queue"
-  PARKING_LOT_QUEUE_NAME        = "parking-lot-queue"
-  MAX_CONCURRENT_QUEUES         = "5"
-  ASB_MAX_MESSAGE_COUNT         = "10"
-  ASB_MAX_WAIT_TIME             = "5"
-  PREFETCH_COUNT                = "20"
-  ENABLE_HEALTH_ENDPOINTS       = "true"
-  HEALTHCHECK_HOST              = "0.0.0.0"
-  HEALTHCHECK_PORT              = "8080"
-  SHUTDOWN_TIMEOUT_SECONDS      = "30"
-  AI_PROVIDER                   = "AZURE_FOUNDRY"
-  AZURE_FOUNDRY_ENDPOINT        = "https://foundry-dlq-msg-router-prod.cognitiveservices.azure.com/openai/deployments/gpt-4o-mini"
-  AZURE_FOUNDRY_DEPLOYMENT_NAME = "gpt-4o-mini"
-  AZURE_FOUNDRY_MAX_TOKENS      = "1200"
+  ENABLE_DYNAMIC_DISCOVERY                = "True"
+  EXCLUDED_QUEUES                         = "parking-lot-queue"
+  PARKING_LOT_QUEUE_NAME                  = "parking-lot-queue"
+  MAX_CONCURRENT_QUEUES                   = "5"
+  ASB_MAX_MESSAGE_COUNT                   = "10"
+  ASB_MAX_WAIT_TIME                       = "5"
+  PREFETCH_COUNT                          = "20"
+  ENABLE_HEALTH_ENDPOINTS                 = "true"
+  HEALTHCHECK_HOST                        = "0.0.0.0"
+  HEALTHCHECK_PORT                        = "8080"
+  SHUTDOWN_TIMEOUT_SECONDS                = "30"
+  AI_PROVIDER                             = "AZURE_FOUNDRY"
+  AZURE_FOUNDRY_ENDPOINT                  = "https://foundry-dlq-msg-router-prod.cognitiveservices.azure.com/openai/deployments/gpt-5.1-chat"
+  AZURE_FOUNDRY_DEPLOYMENT_NAME           = "gpt-5.1-chat"
+  AZURE_FOUNDRY_MAX_TOKENS                = "1200"
   AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS = "2400"
-  AI_RETRY_MAX_ATTEMPTS         = "5"
-  AI_BACKOFF_BASE_SECONDS       = "1.5"
-  AI_BACKOFF_MAX_SECONDS        = "20"
-  RULES_FILE_PATH               = "data/rules.json"
-  AGENT_CYCLE_SLEEP_SECONDS     = "60"
+  AI_RETRY_MAX_ATTEMPTS                   = "5"
+  AI_BACKOFF_BASE_SECONDS                 = "1.5"
+  AI_BACKOFF_MAX_SECONDS                  = "20"
+  RULES_FILE_PATH                         = "data/rules.json"
+  AGENT_CYCLE_SLEEP_SECONDS               = "60"
+}
+
+query_model = {
+  name     = "gpt-5.1-chat"
+  version  = "2025-08-07"
+  capacity = 1
 }
 
 app_secret_env_var_secret_names = {}

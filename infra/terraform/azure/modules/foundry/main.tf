@@ -40,7 +40,7 @@ resource "time_sleep" "wait_for_foundry_ready" {
 }
 
 
-# Deploy the primary query model (e.g., gpt-4o-mini or gpt-5.1-chat)
+# Deploy the primary query model (gpt-5.1-chat)
 resource "azapi_resource" "model_deployment_query" {
   count                     = var.enable_model_deployments ? 1 : 0
   type                      = "Microsoft.CognitiveServices/accounts/deployments@2025-06-01"

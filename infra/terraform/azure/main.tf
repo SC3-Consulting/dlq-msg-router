@@ -131,19 +131,19 @@ locals {
   }
 }
 module "agent_hosting" {
-  source                        = "./modules/agent_hosting"
-  resource_group_name           = module.foundation.resource_group_name
-  location                      = var.location
-  suffix                        = var.environment
-  delegated_agent_subnet_id     = module.network.container_apps_subnet_id
-  log_analytics_workspace_id    = module.observability.log_analytics_workspace_id
-  acr_login_server              = module.data_services.acr_login_server
-  agent_runtime_identity_id     = module.identity.agent_runtime_identity_id
-  app_env_vars                  = merge(
+  source                     = "./modules/agent_hosting"
+  resource_group_name        = module.foundation.resource_group_name
+  location                   = var.location
+  suffix                     = var.environment
+  delegated_agent_subnet_id  = module.network.container_apps_subnet_id
+  log_analytics_workspace_id = module.observability.log_analytics_workspace_id
+  acr_login_server           = module.data_services.acr_login_server
+  agent_runtime_identity_id  = module.identity.agent_runtime_identity_id
+  app_env_vars = merge(
     var.app_env_vars,
     {
       SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE = module.data_services.servicebus_namespace_fqdn
-      AZURE_FOUNDRY_ENDPOINT               = module.foundry.foundry_endpoint
+      AZURE_FOUNDRY_ENDPOINT                = module.foundry.foundry_endpoint
     }
   )
   app_secret_env_var_secret_ids = local.app_secret_env_var_secret_ids

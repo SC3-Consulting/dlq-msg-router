@@ -530,7 +530,7 @@ class AzureFoundryEngine(BaseAIEngine):
                 message = str(e)
                 message_lower = message.lower()
 
-                # Some models (for example gpt-5-mini) require max_completion_tokens
+                # Some models (for example gpt-5.1-chat) may require max_completion_tokens
                 # instead of max_tokens. Retry once with the compatible parameter via
                 # model_extras so the SDK forwards it to the service body.
                 if (

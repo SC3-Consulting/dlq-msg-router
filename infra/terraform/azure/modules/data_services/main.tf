@@ -69,15 +69,15 @@ resource "azurerm_servicebus_queue" "parking_lot" {
 }
 
 resource "azurerm_servicebus_queue" "integration" {
-  name         = "integration-queue"
-  namespace_id = azurerm_servicebus_namespace.this.id
+  name                                 = "integration-queue"
+  namespace_id                         = azurerm_servicebus_namespace.this.id
   dead_lettering_on_message_expiration = true
   max_delivery_count                   = 10
 }
 
 resource "azurerm_servicebus_queue" "payment" {
-  name         = "payments-queue"
-  namespace_id = azurerm_servicebus_namespace.this.id
+  name                                 = "payments-queue"
+  namespace_id                         = azurerm_servicebus_namespace.this.id
   dead_lettering_on_message_expiration = true
   max_delivery_count                   = 10
 }
