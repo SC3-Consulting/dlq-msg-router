@@ -27,8 +27,8 @@ app_env_vars = {
   HEALTHCHECK_PORT                        = "8080"
   SHUTDOWN_TIMEOUT_SECONDS                = "30"
   AI_PROVIDER                             = "AZURE_FOUNDRY"
-  AZURE_FOUNDRY_ENDPOINT                  = "https://foundry-dlq-msg-router-dev.cognitiveservices.azure.com/openai/deployments/gpt-5.1-chat"
-  AZURE_FOUNDRY_DEPLOYMENT_NAME           = "gpt-5.1-chat"
+  AZURE_FOUNDRY_ENDPOINT                  = "https://foundry-dlq-msg-router-dev.cognitiveservices.azure.com/openai/deployments/gpt-5.4"
+  AZURE_FOUNDRY_DEPLOYMENT_NAME           = "gpt-5.4"
   AZURE_FOUNDRY_MAX_TOKENS                = "1200"
   AZURE_FOUNDRY_EMPTY_RESPONSE_MAX_TOKENS = "2400"
   AI_RETRY_MAX_ATTEMPTS                   = "5"
@@ -39,8 +39,8 @@ app_env_vars = {
 }
 
 query_model = {
-  name     = "gpt-5.1-chat"
-  version  = "2025-08-07"
+  name     = "gpt-5.4"
+  version  = "2026-03-05"
   capacity = 1
 }
 

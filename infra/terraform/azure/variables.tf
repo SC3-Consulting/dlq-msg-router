@@ -56,8 +56,8 @@ variable "query_model" {
   })
   description = "Model deployment configuration for Azure Foundry query workloads."
   default = {
-    name     = "gpt-5.1-chat"
-    version  = "2025-08-07"
+    name     = "gpt-5.4"
+    version  = "2026-03-05"
     capacity = 1
   }
 }
