@@ -145,6 +145,15 @@ The Jumpbox is a naked Ubuntu instance. Use the local shell to open the Bastion 
 export TARGET_BRANCH="<target-branch>"
 bash ./infra/scripts/03-configure-jumpbox.sh -e "${TARGET_ENV}"
 ```
+**Trap Resolution: The Silent Jumpbox Script Crash (apt-get lock)**
+If `03-configure-jumpbox.sh` exits silently without printing the "Simulator environment is armed" success message, the newly provisioned Ubuntu VM's background `unattended-upgrades` daemon is likely holding the `apt-get` lock. The script's strict error handling aborts on this failure and leaves a ghost Bastion tunnel process running.
+
+To resolve this, wait 3-5 minutes for the VM to finish its initial background updates, clear the ghost tunnel, and re-execute:
+
+```bash
+pkill -f "az network bastion tunnel" || true
+bash ./infra/scripts/03-configure-jumpbox.sh -e "${TARGET_ENV}"
+```
 
 ### Terminal 2: Bastion SSH Session and Image Push
 Once Phase 03 completes, open the Bastion SSH session to the jumpbox and keep this terminal open for the jumpbox execution plane.
@@ -162,6 +171,7 @@ az network bastion ssh \
 Then, from inside the jumpbox session, push the image:
 
 ```bash
+export TARGET_ENV="dev"
 cd ~/dlq-msg-router
 bash ./infra/scripts/04-push-image.bash -e "${TARGET_ENV}"
 ```
