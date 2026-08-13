@@ -1184,7 +1184,9 @@ def test_flush_queues_missing_namespace(monkeypatch):
 
     monkeypatch.delenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE", raising=False)
 
-    with patch("src.flush_queues.subprocess.check_output", side_effect=FileNotFoundError()):
+    with patch(
+        "src.flush_queues.subprocess.check_output", side_effect=FileNotFoundError()
+    ):
         with patch.object(fq.logger, "error") as mock_error:
             fq.main()
 
