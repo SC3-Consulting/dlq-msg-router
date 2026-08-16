@@ -56,7 +56,7 @@ def _sanitise_metric_label(value: str) -> str:
 
 def _prometheus_escape(value: str) -> str:
     """Escape a label value for Prometheus text exposition.
-    
+
     Args:
         value (str): The label value to escape.
     Returns:
@@ -67,7 +67,7 @@ def _prometheus_escape(value: str) -> str:
 
 def _prometheus_api_response(query: str, result_type: str):
     """Build a minimal Prometheus API response from current in-process counters.
-    
+
     Args:
         query (str): The Prometheus query.
         result_type (str): The type of result, either "vector" or "matrix".
