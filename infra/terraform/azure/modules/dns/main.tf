@@ -3,7 +3,9 @@ locals {
     "privatelink.azurecr.io",
     "privatelink.cognitiveservices.azure.com",
     "privatelink.openai.azure.com",
-    "privatelink.servicebus.windows.net"
+    "privatelink.servicebus.windows.net",
+    "privatelink.azconfig.io",
+    "privatelink.vaultcore.azure.net"
   ]
 }
 

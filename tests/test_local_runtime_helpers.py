@@ -13,6 +13,7 @@ from src import local_smoke_test, run_with_dependency_checks
 
 
 def _cm(value):
+    """Creates a context manager that returns the given value."""
     manager = MagicMock()
     manager.__enter__.return_value = value
     manager.__exit__.return_value = False
@@ -20,6 +21,7 @@ def _cm(value):
 
 
 def test_extract_host_port_from_connection_string_variants():
+    """Proves that the host and port are correctly extracted from various connection string formats."""
     host, port = run_with_dependency_checks._extract_host_port_from_connection_string(
         "Endpoint=sb://servicebus-emulator:5672/;SharedAccessKeyName=x;SharedAccessKey=y"
     )
@@ -40,6 +42,7 @@ def test_extract_host_port_from_connection_string_variants():
 
 
 def test_should_wait_for_emulator_detection():
+    """Proves that the emulator detection logic correctly identifies connection strings that require waiting."""
     assert (
         run_with_dependency_checks._should_wait_for_emulator(
             "Endpoint=sb://example/;UseDevelopmentEmulator=true"
@@ -61,6 +64,7 @@ def test_should_wait_for_emulator_detection():
 
 
 def test_run_dependency_checks_disabled(monkeypatch):
+    """Proves that dependency checks are skipped when disabled via environment variable."""
     monkeypatch.setenv("ENABLE_DEPENDENCY_WAIT", "false")
     wait_tcp = MagicMock()
     wait_http = MagicMock()
@@ -74,6 +78,7 @@ def test_run_dependency_checks_disabled(monkeypatch):
 
 
 def test_run_dependency_checks_success_path(monkeypatch):
+    """Proves that dependency checks are executed and succeed when enabled."""
     monkeypatch.setenv(
         "SERVICE_BUS_CONNECTION_STRING",
         "Endpoint=sb://servicebus-emulator:5678/;UseDevelopmentEmulator=true",
@@ -93,6 +98,7 @@ def test_run_dependency_checks_success_path(monkeypatch):
 
 
 def test_run_dependency_checks_tcp_timeout_skips_http(monkeypatch):
+    """Proves that if the TCP wait fails, the HTTP wait is skipped."""
     monkeypatch.setenv(
         "SERVICE_BUS_CONNECTION_STRING",
         "Endpoint=sb://servicebus-emulator/;UseDevelopmentEmulator=true",
@@ -110,6 +116,7 @@ def test_run_dependency_checks_tcp_timeout_skips_http(monkeypatch):
 
 
 def test_run_with_dependency_checks_main_calls_agent_main(monkeypatch):
+    """Proves that the main function runs dependency checks before calling the agent main."""
     run_checks = MagicMock()
     agent_main = MagicMock()
     monkeypatch.setattr(
@@ -124,6 +131,7 @@ def test_run_with_dependency_checks_main_calls_agent_main(monkeypatch):
 
 
 def test_wait_for_tcp_success(monkeypatch):
+    """Proves that the TCP wait function successfully establishes a connection."""
     created = MagicMock(return_value=_cm(object()))
     monkeypatch.setattr(run_with_dependency_checks.socket, "create_connection", created)
     monkeypatch.setattr(run_with_dependency_checks.time, "time", lambda: 0)
@@ -133,6 +141,7 @@ def test_wait_for_tcp_success(monkeypatch):
 
 
 def test_wait_for_http_success(monkeypatch):
+    """Proves that the HTTP wait function successfully receives a response."""
     response = SimpleNamespace(status=200)
     urlopen = MagicMock(return_value=_cm(response))
     monkeypatch.setattr(run_with_dependency_checks.urllib.request, "urlopen", urlopen)
@@ -143,6 +152,7 @@ def test_wait_for_http_success(monkeypatch):
 
 
 def test_wait_for_url_retries_then_succeeds(monkeypatch):
+    """Proves that the URL wait function retries on failure and eventually succeeds."""
     calls = {"n": 0}
 
     def fake_get_json(_url):
@@ -165,6 +175,7 @@ def test_wait_for_url_retries_then_succeeds(monkeypatch):
 
 
 def test_run_dependency_checks_unparseable_endpoint(monkeypatch):
+    """Proves that dependency checks are skipped when the endpoint is unparseable."""
     monkeypatch.setenv(
         "SERVICE_BUS_CONNECTION_STRING",
         "Endpoint=sb:///;UseDevelopmentEmulator=true",
@@ -181,6 +192,7 @@ def test_run_dependency_checks_unparseable_endpoint(monkeypatch):
 
 
 def test_extract_property_handles_bytes_keys_and_values():
+    """Proves that the property extraction function correctly handles byte keys and values."""
     message = SimpleNamespace(
         application_properties={b"smoke_test_id": b"abc-123", "other": "value"}
     )
@@ -189,11 +201,13 @@ def test_extract_property_handles_bytes_keys_and_values():
 
 
 def test_smoke_main_missing_connection_string(monkeypatch):
+    """Proves that the main function returns an error when the connection string is missing."""
     monkeypatch.delenv("SERVICE_BUS_CONNECTION_STRING", raising=False)
     assert local_smoke_test.main() == 1
 
 
 def test_smoke_main_agent_health_not_ready(monkeypatch):
+    """Proves that the main function returns an error when the agent health check fails."""
     monkeypatch.setenv("SERVICE_BUS_CONNECTION_STRING", "Endpoint=sb://mock/")
     monkeypatch.setattr(
         local_smoke_test, "_wait_for_url", MagicMock(return_value=False)
@@ -203,6 +217,7 @@ def test_smoke_main_agent_health_not_ready(monkeypatch):
 
 
 def test_smoke_main_emulator_health_not_ready(monkeypatch):
+    """Proves that the main function returns an error when the emulator health check fails."""
     monkeypatch.setenv("SERVICE_BUS_CONNECTION_STRING", "Endpoint=sb://mock/")
     monkeypatch.setattr(
         local_smoke_test,
@@ -214,6 +229,7 @@ def test_smoke_main_emulator_health_not_ready(monkeypatch):
 
 
 def test_smoke_main_message_not_found_returns_error(monkeypatch):
+    """Proves that the main function returns an error when the smoke test message is not found."""
     monkeypatch.setenv("SERVICE_BUS_CONNECTION_STRING", "Endpoint=sb://mock/")
     monkeypatch.setenv("SMOKE_TEST_PROCESSING_TIMEOUT_SECONDS", "1")
     monkeypatch.setattr(local_smoke_test, "_wait_for_url", MagicMock(return_value=True))
@@ -244,6 +260,7 @@ def test_smoke_main_message_not_found_returns_error(monkeypatch):
 
 
 def test_smoke_main_success_path(monkeypatch):
+    """Proves that the main function succeeds when the smoke test message is processed."""
     monkeypatch.setenv("SERVICE_BUS_CONNECTION_STRING", "Endpoint=sb://mock/")
     monkeypatch.setenv("SMOKE_TEST_PROCESSING_TIMEOUT_SECONDS", "2")
     monkeypatch.setattr(local_smoke_test, "_wait_for_url", MagicMock(return_value=True))
@@ -288,6 +305,7 @@ def test_smoke_main_success_path(monkeypatch):
 
 
 def test_smoke_main_processing_timeout_returns_error(monkeypatch):
+    """Proves that the main function returns an error when the smoke test processing times out."""
     monkeypatch.setenv("SERVICE_BUS_CONNECTION_STRING", "Endpoint=sb://mock/")
     monkeypatch.setenv("SMOKE_TEST_PROCESSING_TIMEOUT_SECONDS", "0")
     monkeypatch.setattr(local_smoke_test, "_wait_for_url", MagicMock(return_value=True))

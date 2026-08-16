@@ -143,7 +143,7 @@ class ClassificationCache:
         get(key: str):
             Retrieves the value associated with the key from the cache, or None if not present.
         save(key: str, value: dict, ttl_seconds: Optional[int] = None):
-            Saves a value in the cache with an optional TTL. If TTL is not provided, the default TTL from the cache initialization is used.
+            Saves a value in the cache with an optional TTL. If TTL is not provided, the default TTL from the cache initialisation is used.
         exists(key: str) -> bool:
             Checks if a key exists in the cache.
         flush():
@@ -164,7 +164,9 @@ class ClassificationCache:
         active_maxsize = maxsize if maxsize is not None else env_maxsize
         active_ttl = ttl_seconds if ttl_seconds is not None else env_ttl
 
-        self.cache = TTLCache(maxsize=active_maxsize, ttl=active_ttl)
+        self.cache: TTLCache[str, dict] = TTLCache(
+            maxsize=active_maxsize, ttl=active_ttl
+        )
         self.lock = threading.Lock()
 
     def get(self, key: str):
@@ -178,16 +180,12 @@ class ClassificationCache:
             return self.cache.get(key)
 
     def save(self, key: str, value: dict, ttl_seconds: Optional[int] = None):
-        """Saves a value in the cache with an optional TTL.
+        """Save a value using the cache-wide TTL.
         Args:
             key (str): The key under which to store the value.
             value (dict): The value to store in the cache.
-            ttl_seconds (int, optional): The time-to-live in seconds for this specific entry. If not provided, the default TTL from the cache initialisation is used.
+            ttl_seconds (int, optional): Retained for caller compatibility. TTLCache applies the configured TTL to every entry, so this value is ignored.
         """
-        # TODO: TTLCache manages expiry globally based on init.
-        # The ttl_seconds parameter is accepted for interface compatibility but managed by cachetools.
-        # If per-entry TTL is required, consider implementing a custom cache wrapper or using a different caching library that supports per-entry TTL.
-        # Currently, the TTL parameter is ignored and the default TTL from the cache initialisation is used.
         with self.lock:
             self.cache[key] = value
 

@@ -95,6 +95,7 @@ local-up:
 
 local-up-emulator:
 	@if [ "$(SKIP_LLM_CHECK)" != "1" ]; then ./scripts/ollama_model_startup_check.sh || true; else echo "Skipping LLM startup check (SKIP_LLM_CHECK=1)"; fi
+	@echo "Using MSSQL_SA_PASSWORD from the exported shell environment or .env; Compose will fail if it is missing."
 	docker compose --profile asb-emulator up -d --build
 
 local-smoke-emulator:

@@ -13,28 +13,22 @@ import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict, List, Optional, Union
+from urllib.parse import parse_qs, urlparse
 
 from azure.core.exceptions import ClientAuthenticationError, HttpResponseError
 from azure.identity import DefaultAzureCredential
-from azure.servicebus import (
-    ServiceBusClient,
-    ServiceBusReceiveMode,
-    ServiceBusSubQueue,
-)
+from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode, ServiceBusSubQueue
 from azure.servicebus.management import ServiceBusAdministrationClient
 from dotenv import load_dotenv
 
 from src.ai_client import AIEngineFactory
 from src.autonomous_dlq_classifier import AutonomousDLQClassifier
-from src.resilience import (
-    CircuitBreaker,
-    CircuitBreakerOpenError,
-    backoff_sleep,
-)
+from src.resilience import CircuitBreaker, CircuitBreakerOpenError, backoff_sleep
 from src.state_managers import ClassificationCache, IdempotencyStore
 
 # Configure enterprise logging standard
@@ -58,6 +52,54 @@ def _sanitise_metric_label(value: str) -> str:
         str: The sanitised string.
     """
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in str(value)).strip("_")
+
+
+def _prometheus_escape(value: str) -> str:
+    """Escape a label value for Prometheus text exposition.
+    
+    Args:
+        value (str): The label value to escape.
+    Returns:
+        str: The escaped label value.
+    """
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _prometheus_api_response(query: str, result_type: str):
+    """Build a minimal Prometheus API response from current in-process counters.
+    
+    Args:
+        query (str): The Prometheus query.
+        result_type (str): The type of result, either "vector" or "matrix".
+    Returns:
+        dict: The Prometheus API response.
+    """
+    snapshot = observability.snapshot()
+    results = []
+    timestamp = time.time()
+    if query in snapshot["counters"]:
+        results.append(
+            {
+                "metric": {"__name__": query},
+                "value": [timestamp, str(snapshot["counters"][query])],
+            }
+        )
+    elif query == "queue_messages_processed_total":
+        for queue_name, value in snapshot["queues"].items():
+            results.append(
+                {
+                    "metric": {"__name__": query, "queue": queue_name},
+                    "value": [timestamp, str(value)],
+                }
+            )
+
+    if result_type == "matrix":
+        results = [
+            {"metric": item["metric"], "values": [item["value"]]} for item in results
+        ]
+    else:
+        result_type = "vector"
+    return {"status": "success", "data": {"resultType": result_type, "result": results}}
 
 
 @dataclass
@@ -228,8 +270,46 @@ class HealthProbeHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         """Handles GET requests for health and metrics endpoints."""
-        if self.path not in {"/health", "/ready", "/metrics"}:
+        parsed_path = urlparse(self.path)
+        if parsed_path.path in {"/api/v1/query", "/api/v1/query_range"}:
+            query = parse_qs(parsed_path.query).get("query", [""])[0]
+            result_type = (
+                "matrix" if parsed_path.path.endswith("query_range") else "vector"
+            )
+            body = json.dumps(_prometheus_api_response(query, result_type)).encode(
+                "utf-8"
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if parsed_path.path not in {
+            "/health",
+            "/ready",
+            "/metrics",
+            "/metrics/prometheus",
+        }:
             self.send_error(404)
+            return
+
+        if self.path == "/metrics/prometheus":
+            snapshot = observability.snapshot()
+            lines = []
+            for name, value in snapshot["counters"].items():
+                lines.append(f"{name} {value}")
+            for queue_name, value in snapshot["queues"].items():
+                lines.append(
+                    f'queue_messages_processed_total{{queue="{_prometheus_escape(queue_name)}"}} {value}'
+                )
+            body = ("\n".join(lines) + "\n").encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         if self.path == "/metrics":
@@ -249,6 +329,25 @@ class HealthProbeHandler(BaseHTTPRequestHandler):
 
         body = json.dumps({"path": self.path, **snapshot}).encode("utf-8")
         self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        """Handle Prometheus form-encoded instant and range queries."""
+        parsed_path = urlparse(self.path)
+        if parsed_path.path not in {"/api/v1/query", "/api/v1/query_range"}:
+            self.send_error(404)
+            return
+
+        content_length = int(self.headers.get("Content-Length", "0"))
+        request_body = self.rfile.read(content_length).decode("utf-8")
+        form = parse_qs(request_body)
+        query = form.get("query", [""])[0]
+        result_type = "matrix" if parsed_path.path.endswith("query_range") else "vector"
+        body = json.dumps(_prometheus_api_response(query, result_type)).encode("utf-8")
+        self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -548,32 +647,45 @@ def discover_target_queues(fqdn, credential):
         [q.strip() for q in excluded_str.split(",")] if excluded_str else []
     )
     parking_lot = os.getenv("PARKING_LOT_QUEUE_NAME", "parking-lot-queue")
+    conn_str = os.getenv("SERVICE_BUS_CONNECTION_STRING", "")
+    local_emulator = "usedevelopmentemulator=true" in conn_str.lower()
+    if local_emulator and enable_discovery:
+        logger.warning(
+            "Dynamic queue discovery is not supported by the local Service Bus emulator; "
+            "using static ASB_SOURCES configuration."
+        )
+        enable_discovery = False
 
     if enable_discovery:
         logger.info(
             "Attempting dynamic queue discovery via ServiceBusAdministrationClient..."
         )
         try:
-            conn_str = os.getenv("SERVICE_BUS_CONNECTION_STRING")
             if conn_str:
                 admin_client = ServiceBusAdministrationClient.from_connection_string(
                     conn_str
                 )
+                queue_source = admin_client
             else:
                 admin_client = ServiceBusAdministrationClient(
                     fqdn, credential=credential
                 )
+                queue_source = admin_client.__enter__()
 
             discovered_queues = []
-            for q_properties in admin_client.list_queues():
+            for q_properties in queue_source.list_queues():
                 q_name = q_properties.name
                 if q_name not in excluded_queues and q_name != parking_lot:
                     discovered_queues.append(q_name)
             logger.info(
                 f"Dynamically discovered {len(discovered_queues)} eligible target queues."
             )
+            if not conn_str:
+                admin_client.__exit__(None, None, None)
             return discovered_queues
         except HttpResponseError as e:
+            if not conn_str:
+                admin_client.__exit__(type(e), e, e.__traceback__)
             if e.status_code == 403:
                 logger.warning(
                     "RBAC 403 Forbidden: Agent identity lacks Data Owner permissions for dynamic discovery."
@@ -633,6 +745,7 @@ def drain_queue_dlq(
     max_count = int(os.getenv("ASB_MAX_MESSAGE_COUNT", 10))
     max_wait = int(os.getenv("ASB_MAX_WAIT_TIME", 5))
     parking_lot_name = os.getenv("PARKING_LOT_QUEUE_NAME", "parking-lot-queue")
+    notification_queue_name = os.getenv("NOTIFICATION_QUEUE_NAME", "notification-queue")
     drain_max_attempts = int(os.getenv("DRAIN_RETRY_MAX_ATTEMPTS", "3"))
     drain_backoff_base = float(os.getenv("DRAIN_BACKOFF_BASE_SECONDS", "1.0"))
     drain_backoff_max = float(os.getenv("DRAIN_BACKOFF_MAX_SECONDS", "30.0"))
@@ -652,6 +765,9 @@ def drain_queue_dlq(
             )
             main_sender = sb_client.get_queue_sender(queue_name=queue_name)
             parking_lot_sender = sb_client.get_queue_sender(queue_name=parking_lot_name)
+            notification_sender = sb_client.get_queue_sender(
+                queue_name=notification_queue_name
+            )
 
             classifier = AutonomousDLQClassifier(
                 idempotency_cache=idempotency_store,
@@ -662,9 +778,14 @@ def drain_queue_dlq(
                 main_queue_sender=main_sender,
                 dlq_receiver=dlq_receiver,
                 source_queue_name=queue_name,
+                notification_sender=notification_sender,
             )
 
-            with dlq_receiver, main_sender, parking_lot_sender:
+            sender_contexts = [dlq_receiver, main_sender, parking_lot_sender]
+            sender_contexts.append(notification_sender)
+            with ExitStack() as stack:
+                for sender_context in sender_contexts:
+                    stack.enter_context(sender_context)
                 while not shutdown_event.is_set():
                     messages = dlq_receiver.receive_messages(
                         max_message_count=max_count, max_wait_time=max_wait
@@ -756,9 +877,15 @@ def _validate_startup_configuration(
 
     ai_provider = os.getenv("AI_PROVIDER", "OLLAMA").upper()
     if ai_provider == "AZURE_FOUNDRY":
-        if not os.getenv("AZURE_FOUNDRY_ENDPOINT"):
+        foundry_endpoint = os.getenv("AZURE_FOUNDRY_ENDPOINT", "").strip()
+        if not foundry_endpoint:
             errors.append(
                 "AZURE_FOUNDRY_ENDPOINT is required when AI_PROVIDER=AZURE_FOUNDRY."
+            )
+        elif "your-endpoint" in foundry_endpoint.lower():
+            errors.append(
+                "AZURE_FOUNDRY_ENDPOINT still contains the placeholder endpoint; "
+                "set a reachable Foundry endpoint."
             )
         if not os.getenv("AZURE_FOUNDRY_DEPLOYMENT_NAME"):
             errors.append(

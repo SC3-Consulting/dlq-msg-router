@@ -11,7 +11,7 @@ import time
 from typing import Any, Optional, cast
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 from azure.core.exceptions import ClientAuthenticationError, HttpResponseError
@@ -122,6 +122,7 @@ def mock_infrastructure():
         "receiver": MagicMock(),
         "main_sender": MagicMock(),
         "parking_sender": MagicMock(),
+        "notification_sender": MagicMock(),
         "db": MagicMock(),
         "ai": MagicMock(),
     }
@@ -151,6 +152,7 @@ def test_service_bus_factory_singleton(mock_sb_client):
 
 
 def test_runtime_health_probe_server_reports_state():
+    """Proves the health server responds with correct readiness and shutdown states."""
     from src.run_agent import runtime_health, start_health_server, stop_health_server
 
     runtime_health.reset()
@@ -182,6 +184,7 @@ def test_runtime_health_probe_server_reports_state():
 
 
 def test_metrics_endpoint_reports_observability_counters():
+    """Proves the /metrics endpoint exposes counters for processed messages, cache hits, retries, and failures."""
     from src.run_agent import (
         observability,
         runtime_health,
@@ -212,6 +215,34 @@ def test_metrics_endpoint_reports_observability_counters():
             assert payload["counters"]["retries_total"] == 1
             assert payload["counters"]["failures_total"] == 1
             assert payload["queues"]["integration-queue"] == 1
+
+        with urlopen(f"http://127.0.0.1:{port}/metrics/prometheus") as response:
+            metrics_text = response.read().decode("utf-8")
+            assert response.status == 200
+            assert "messages_processed_total 1" in metrics_text
+            assert (
+                'queue_messages_processed_total{queue="integration-queue"} 1'
+                in metrics_text
+            )
+
+        with urlopen(
+            f"http://127.0.0.1:{port}/api/v1/query?query=messages_processed_total"
+        ) as response:
+            prometheus_payload = json.loads(response.read().decode("utf-8"))
+            assert prometheus_payload["status"] == "success"
+            assert prometheus_payload["data"]["resultType"] == "vector"
+            assert prometheus_payload["data"]["result"][0]["value"][1] == "1"
+
+        request = Request(
+            f"http://127.0.0.1:{port}/api/v1/query",
+            data=b"query=messages_processed_total",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urlopen(request) as response:
+            posted_payload = json.loads(response.read().decode("utf-8"))
+            assert response.status == 200
+            assert posted_payload["status"] == "success"
     finally:
         stop_health_server(server)
         observability.reset()
@@ -240,6 +271,7 @@ def test_dynamic_discovery_rbac_fallback(mock_admin_client, monkeypatch):
 
 
 def test_extract_namespace_from_connection_string():
+    """Proves the utility correctly extracts the namespace from a Service Bus connection string."""
     from src.run_agent import _extract_namespace_from_connection_string
 
     conn = (
@@ -254,6 +286,7 @@ def test_extract_namespace_from_connection_string():
 
 @patch("src.run_agent.ServiceBusAdministrationClient")
 def test_dynamic_discovery_uses_connection_string(mock_admin_client, monkeypatch):
+    """Proves the discovery mechanism can use a connection string to list queues when RBAC is unavailable."""
     monkeypatch.setenv("ENABLE_DYNAMIC_DISCOVERY", "True")
     monkeypatch.setenv(
         "SERVICE_BUS_CONNECTION_STRING",
@@ -283,6 +316,7 @@ def test_fix_and_retry_type_safe_mutation(temp_env, mock_infrastructure):
         mock_infrastructure["receiver"],
         mock_infrastructure["main_sender"],
         mock_infrastructure["parking_sender"],
+        notification_sender=mock_infrastructure["notification_sender"],
     )
 
     msg = MockServiceBusReceivedMessage(
@@ -307,7 +341,7 @@ def test_fix_and_retry_type_safe_mutation(temp_env, mock_infrastructure):
 
 
 def test_broker_offline_nested_catch_safety(mock_infrastructure):
-    """Proves the Phase 2 nested try/except prevents cascading thread crashes."""
+    """Proves settlement failure reaches the batch safety boundary."""
     router = ActionRouter(
         mock_infrastructure["receiver"],
         mock_infrastructure["main_sender"],
@@ -323,10 +357,8 @@ def test_broker_offline_nested_catch_safety(mock_infrastructure):
         "Broker unreachable"
     )
 
-    try:
+    with pytest.raises(ServiceBusError, match="Network partition"):
         router.route_and_execute("drop", msg, "ttl_expired", None)
-    except Exception as e:
-        pytest.fail(f"Agent thread crashed due to unhandled nested exception: {e}")
 
 
 # ==========================================
@@ -487,6 +519,7 @@ def test_gate_b_idempotency_and_noise_suppression(classifier, mock_infrastructur
 
 
 def test_correlation_context_uses_otel_traceparent(classifier, mock_infrastructure):
+    """Proves Gate B extracts traceparent and tracestate for distributed tracing."""
     traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
     msg = MockServiceBusReceivedMessage(
         body_dict={"id": 77},
@@ -514,6 +547,7 @@ def test_correlation_context_uses_otel_traceparent(classifier, mock_infrastructu
 def test_idempotency_prefers_otel_trace_id_over_correlation_id(
     classifier, mock_infrastructure
 ):
+    """Proves Gate B uses trace_id for idempotency when available, falling back to correlation_id."""
     traceparent = "00-11111111111111111111111111111111-2222222222222222-01"
     msg_a = MockServiceBusReceivedMessage(
         body_dict={"id": 100},
@@ -546,6 +580,7 @@ def test_idempotency_prefers_otel_trace_id_over_correlation_id(
 
 
 def test_correlation_context_falls_back_without_otel(classifier, mock_infrastructure):
+    """Proves Gate B falls back to correlation_id when traceparent is absent."""
     msg = MockServiceBusReceivedMessage(
         body_dict={"id": 88},
         properties={b"client_id": "Client_NoOTEL", b"message_type": "PaymentRequest"},
@@ -690,9 +725,14 @@ def test_drain_queue_dlq_flows(mock_classifier_cls, mock_factory):
     mock_receiver = MagicMock()
     mock_main_sender = MagicMock()
     mock_parking_sender = MagicMock()
+    mock_notification_sender = MagicMock()
 
     mock_client.get_queue_receiver.return_value = mock_receiver
-    mock_client.get_queue_sender.side_effect = [mock_main_sender, mock_parking_sender]
+    mock_client.get_queue_sender.side_effect = [
+        mock_main_sender,
+        mock_parking_sender,
+        mock_notification_sender,
+    ]
 
     # Simulate finding exactly 1 message, followed by an empty list to exit polling cleanly
     mock_msg = MagicMock()
@@ -713,7 +753,7 @@ def test_drain_queue_dlq_flows(mock_classifier_cls, mock_factory):
 
     # Assert AMQP multiplexed resource collection boundaries are preserved
     mock_client.get_queue_receiver.assert_called_once()
-    assert mock_client.get_queue_sender.call_count == 2
+    assert mock_client.get_queue_sender.call_count == 3
     mock_classifier_instance.process_batch.assert_called_once_with([mock_msg])
 
 
@@ -728,6 +768,7 @@ def test_all_action_commands_execution(mock_infrastructure):
         mock_infrastructure["receiver"],
         mock_infrastructure["main_sender"],
         mock_infrastructure["parking_sender"],
+        notification_sender=mock_infrastructure["notification_sender"],
     )
     msg = MockServiceBusReceivedMessage(body_dict={}, properties={b"Resubmit-Count": 0})
 
@@ -1087,7 +1128,7 @@ def test_azure_foundry_engine_retries_with_higher_tokens_on_reasoning_exhaustion
 @pytest.mark.usefixtures("temp_env")
 @patch("src.ai_client.ChatCompletionsClient")
 def test_azure_foundry_engine_normalizes_base_endpoint(mock_azure_client, monkeypatch):
-    """Proves base account endpoint is normalized to deployment-scoped endpoint."""
+    """Proves base account endpoint is normalised to deployment-scoped endpoint."""
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
     monkeypatch.setenv(
         "AZURE_FOUNDRY_ENDPOINT",
@@ -1140,6 +1181,7 @@ def test_drain_queue_dlq_hard_crash_safety(mock_factory):
 
 @patch("src.run_agent.ServiceBusClientFactory")
 def test_drain_queue_dlq_auth_failure_stops_agent(mock_factory):
+    """Proves that a ServiceBusClient authentication failure triggers a graceful shutdown."""
     from src.run_agent import drain_queue_dlq, runtime_health, shutdown_event
 
     runtime_health.reset()
@@ -1180,9 +1222,11 @@ def test_flush_queues_coverage_absorption(mock_admin, mock_client, monkeypatch):
 
 
 def test_flush_queues_missing_namespace(monkeypatch):
+    """Proves flush_queues exits gracefully when the namespace FQDN is missing."""
     import src.flush_queues as fq
 
     monkeypatch.delenv("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE", raising=False)
+    monkeypatch.delenv("SERVICE_BUS_CONNECTION_STRING", raising=False)
 
     with patch(
         "src.flush_queues.subprocess.check_output", side_effect=FileNotFoundError()
@@ -1190,12 +1234,14 @@ def test_flush_queues_missing_namespace(monkeypatch):
         with patch.object(fq.logger, "error") as mock_error:
             fq.main()
 
-    mock_error.assert_called_once_with(
-        "Missing SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE in environment settings"
-    )
+        mock_error.assert_called_once_with(
+            "Missing Service Bus configuration: set SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE "
+            "or SERVICE_BUS_CONNECTION_STRING"
+        )
 
 
 def test_flush_queues_invalid_sources_json(monkeypatch):
+    """Proves flush_queues exits gracefully when ASB_SOURCES is invalid JSON."""
     import src.flush_queues as fq
 
     monkeypatch.setenv(
@@ -1210,6 +1256,7 @@ def test_flush_queues_invalid_sources_json(monkeypatch):
 
 
 def test_flush_queues_connection_string_and_parking_lot(monkeypatch):
+    """Proves flush_queues clears source and operational queues with their DLQs."""
     import src.flush_queues as fq
 
     monkeypatch.setenv(
@@ -1226,6 +1273,8 @@ def test_flush_queues_connection_string_and_parking_lot(monkeypatch):
     )
     monkeypatch.setenv("SERVICE_BUS_CONNECTION_STRING", "Endpoint=sb://mock/")
     monkeypatch.setenv("PARKING_LOT_QUEUE_NAME", "parking-lot-queue")
+    monkeypatch.setenv("NOTIFICATION_QUEUE_NAME", "notification-queue")
+    monkeypatch.setenv("NOTIFICATION_MANUAL_QUEUE_NAME", "notification-manual-queue")
 
     mock_client = MagicMock()
     mock_client.__enter__.return_value = mock_client
@@ -1236,10 +1285,19 @@ def test_flush_queues_connection_string_and_parking_lot(monkeypatch):
         fq.main()
 
     mock_conn.assert_called_once_with("Endpoint=sb://mock/")
-    assert mock_flush_queue.call_count == 3
+    assert mock_flush_queue.call_count == 8
     mock_flush_queue.assert_any_call(mock_client, "orders-queue", is_dlq=False)
     mock_flush_queue.assert_any_call(mock_client, "orders-queue", is_dlq=True)
     mock_flush_queue.assert_any_call(mock_client, "parking-lot-queue", is_dlq=False)
+    mock_flush_queue.assert_any_call(mock_client, "parking-lot-queue", is_dlq=True)
+    mock_flush_queue.assert_any_call(mock_client, "notification-queue", is_dlq=False)
+    mock_flush_queue.assert_any_call(mock_client, "notification-queue", is_dlq=True)
+    mock_flush_queue.assert_any_call(
+        mock_client, "notification-manual-queue", is_dlq=False
+    )
+    mock_flush_queue.assert_any_call(
+        mock_client, "notification-manual-queue", is_dlq=True
+    )
 
 
 def test_router_internal_exception_handling(mock_infrastructure):
@@ -1258,8 +1316,9 @@ def test_router_internal_exception_handling(mock_infrastructure):
         "Settlement Failed"
     )
 
-    # This triggers the nested logger.error(exc_info=True) in DropCommand
-    router.route_and_execute("drop", msg, "coverage_test", None)
+    # Settlement failures must be visible to the caller for safe batch handling.
+    with pytest.raises(Exception, match="Settlement Failed"):
+        router.route_and_execute("drop", msg, "coverage_test", None)
     assert mock_infrastructure["receiver"].complete_message.called
 
 
@@ -1309,6 +1368,7 @@ def test_startup_validation_requires_core_service_bus_config(monkeypatch):
 
 
 def test_startup_validation_requires_foundry_fields(monkeypatch):
+    """Covers early orchestrator exit when the Azure Foundry configuration is missing."""
     from src.run_agent import _validate_startup_configuration
 
     monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
@@ -1325,7 +1385,27 @@ def test_startup_validation_requires_foundry_fields(monkeypatch):
     assert any("AZURE_FOUNDRY_DEPLOYMENT_NAME" in e for e in errors)
 
 
+def test_startup_validation_rejects_placeholder_foundry_endpoint(monkeypatch):
+    """Rejects the local placeholder before processing messages."""
+    from src.run_agent import _validate_startup_configuration
+
+    monkeypatch.setenv("AI_PROVIDER", "AZURE_FOUNDRY")
+    monkeypatch.setenv(
+        "AZURE_FOUNDRY_ENDPOINT",
+        "https://privatelink.services.ai.azure.com/your-endpoint",
+    )
+    monkeypatch.setenv("AZURE_FOUNDRY_DEPLOYMENT_NAME", "gpt-4o-mini")
+
+    errors = _validate_startup_configuration(
+        conn_str="Endpoint=sb://mock/;SharedAccessKeyName=Root;SharedAccessKey=x",
+        fqdn="mock.servicebus.windows.net",
+    )
+
+    assert any("placeholder endpoint" in error for error in errors)
+
+
 def test_startup_validation_rejects_conn_str_with_multi_namespace(monkeypatch):
+    """Covers early orchestrator exit when SERVICE_BUS_CONNECTION_STRING is combined with SERVICE_BUS_FULLY_QUALIFIED_NAMESPACES."""
     from src.run_agent import _validate_startup_configuration
 
     monkeypatch.setenv("AI_PROVIDER", "OLLAMA")
@@ -1346,6 +1426,7 @@ def test_startup_validation_rejects_conn_str_with_multi_namespace(monkeypatch):
 
 
 def test_resolve_namespace_targets_prefers_multi_namespace_list():
+    """Covers the logic that resolves the final list of target namespaces for the orchestrator."""
     from src.run_agent import _resolve_namespace_targets
 
     targets = _resolve_namespace_targets(
@@ -1543,6 +1624,7 @@ def test_classification_cache_expiry():
 
 
 def test_classification_cache_uses_environment_defaults(monkeypatch):
+    """Covers the environment variable overrides for ClassificationCache configuration."""
     monkeypatch.setenv("CLASSIFICATION_CACHE_MAXSIZE", "123")
     monkeypatch.setenv("CLASSIFICATION_TTL_SECONDS", "7")
 
@@ -1576,6 +1658,7 @@ def test_action_executor_corrupted_payload_in_fix(mock_infrastructure):
 
 
 def test_retry_propagates_otel_correlation_headers(mock_infrastructure):
+    """Proves that the RetryCommand correctly propagates OpenTelemetry traceparent and tracestate headers."""
     router = ActionRouter(
         mock_infrastructure["receiver"],
         mock_infrastructure["main_sender"],
@@ -1605,6 +1688,7 @@ def test_retry_propagates_otel_correlation_headers(mock_infrastructure):
 
 
 def test_retry_propagates_fallback_correlation_when_no_otel(mock_infrastructure):
+    """Proves that the RetryCommand correctly propagates fallback correlation headers when OpenTelemetry is not present."""
     router = ActionRouter(
         mock_infrastructure["receiver"],
         mock_infrastructure["main_sender"],
@@ -1629,6 +1713,7 @@ def test_retry_propagates_fallback_correlation_when_no_otel(mock_infrastructure)
 
 
 def test_backoff_sleep_without_jitter(monkeypatch):
+    """Proves that backoff_sleep calculates the correct duration without jitter."""
     from src.resilience import backoff_sleep
 
     slept = []
@@ -1646,6 +1731,7 @@ def test_backoff_sleep_without_jitter(monkeypatch):
 
 
 def test_circuit_breaker_open_blocks_until_recovery(monkeypatch):
+    """Proves that the CircuitBreaker blocks requests when open and allows after recovery."""
     from src.resilience import CircuitBreaker
 
     CircuitBreaker.reset("unit-circuit")
@@ -1663,6 +1749,7 @@ def test_circuit_breaker_open_blocks_until_recovery(monkeypatch):
 
 
 def test_retry_command_uses_configurable_attempt_limit(monkeypatch):
+    """Proves that the RetryCommand respects the configurable attempt limit."""
     monkeypatch.setenv("ACTION_RETRY_MAX_ATTEMPTS", "2")
     monkeypatch.setenv("ACTION_BACKOFF_BASE_SECONDS", "0")
     monkeypatch.setenv("ACTION_BACKOFF_MAX_SECONDS", "0")
@@ -1691,6 +1778,7 @@ def test_retry_command_uses_configurable_attempt_limit(monkeypatch):
 
 
 def test_ai_invoke_respects_open_circuit(monkeypatch):
+    """Proves that the AI invocation falls back to safe escalation when the circuit is open."""
     from src.autonomous_dlq_classifier import AutonomousDLQClassifier
     from src.resilience import CircuitBreaker
 
@@ -1720,6 +1808,7 @@ def test_ai_invoke_respects_open_circuit(monkeypatch):
 
 
 def test_drain_queue_backoff_retries(monkeypatch):
+    """Proves that drain_queue_dlq respects backoff retry configuration."""
     from src.resilience import CircuitBreaker
     from src.run_agent import drain_queue_dlq
 
@@ -1771,6 +1860,7 @@ def test_classifier_cache_corruption_fails_open(classifier, mock_infrastructure)
 
 
 def test_ai_timeout_cascade_degrades_to_safe_escalation(monkeypatch):
+    """Proves that if the AI engine times out, the classifier degrades to safe escalation."""
     from src.autonomous_dlq_classifier import AutonomousDLQClassifier
     from src.resilience import CircuitBreaker
 
@@ -1801,6 +1891,7 @@ def test_ai_timeout_cascade_degrades_to_safe_escalation(monkeypatch):
 
 
 def test_drain_queue_shutdown_during_processing(monkeypatch):
+    """Proves that drain_queue_dlq handles shutdown signals gracefully."""
     from src.resilience import CircuitBreaker
     from src.run_agent import drain_queue_dlq, shutdown_event
 
@@ -1821,13 +1912,22 @@ def test_drain_queue_shutdown_during_processing(monkeypatch):
     mock_sender_parking.__enter__.return_value = mock_sender_parking
     mock_sender_parking.__exit__.return_value = False
 
+    mock_sender_notification = MagicMock()
+    mock_sender_notification.__enter__.return_value = mock_sender_notification
+    mock_sender_notification.__exit__.return_value = False
+
     fake_client = MagicMock()
     fake_client.get_queue_receiver.return_value = mock_receiver
-    fake_client.get_queue_sender.side_effect = [mock_sender_main, mock_sender_parking]
+    fake_client.get_queue_sender.side_effect = [
+        mock_sender_main,
+        mock_sender_parking,
+        mock_sender_notification,
+    ]
 
     classifier_instance = MagicMock()
 
     def process_batch_and_request_shutdown(_messages):
+        """Requests shutdown during batch processing."""
         shutdown_event.set()
 
     classifier_instance.process_batch.side_effect = process_batch_and_request_shutdown

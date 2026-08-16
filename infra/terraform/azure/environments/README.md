@@ -13,6 +13,11 @@ Each subfolder contains environment-specific Terraform inputs used by the deploy
 - Keep non-secret runtime values in `app_env_vars` inside `platform.tfvars`.
 - Do not commit secret values to source control.
 - For secrets, set `app_secret_env_var_secret_names` to map environment variable name -> Key Vault secret name.
+- `webhook_registry` contains only client endpoint metadata and Key Vault secret names. Add the corresponding secret values to the runtime webhook Key Vault after deployment; never commit them to `platform.tfvars`.
+
+The notification worker reads the `webhook-registry` JSON key from Azure App Configuration
+using the environment label. The registry provider is isolated in the application so it can
+later be replaced with a storage or database lookup without changing notification delivery.
 - The root Terraform module resolves those secret names to Key Vault secret IDs and injects them into Container Apps as Key Vault-backed secrets.
 
 ## Usage

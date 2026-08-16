@@ -1,0 +1,9 @@
+[MAIN]
+# Keep linting focused on correctness and maintainability; legacy documentation and
+# logging style are covered by the formatter and code review conventions.
+
+[MESSAGES CONTROL]
+disable=fixme,logging-fstring-interpolation
+
+[BASIC]
+max-line-length=120

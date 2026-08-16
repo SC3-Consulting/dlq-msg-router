@@ -13,6 +13,17 @@ The agent also emits structured JSON contracts prefixed with `JSON_EXPORT|` for 
 
 To generate the operational dashboard, navigate to the Azure Log Analytics Workspace linked to the container environment and execute the following Kusto Query Language (KQL) script. Select 'Export to CSV' from the portal interface to download the results.
 
+Container Apps log ingestion is asynchronous. After deployment or a new revision, allow
+several minutes for console logs to appear. The Terraform deployment enables the
+`ContainerAppConsoleLogs` and `ContainerAppSystemLogs` diagnostic categories on the
+Container Apps environment. Verify ingestion with:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where TimeGenerated >= ago(30m)
+| summarize records=count(), latest=max(TimeGenerated)
+```
+
 ```kusto
 ContainerAppConsoleLogs_CL
 | where ContainerAppName_s == "ca-dlq-msg-router-dev"
@@ -57,7 +68,7 @@ ContainerAppConsoleLogs_CL
 
 The runtime exposes an in-process metrics endpoint at `/metrics` on the same probe host/port as health checks (default `:8080`).
 
-- Local check: `curl http://127.0.0.1:8080/metrics`
+- Local check: `curl http://127.0.0.1:18080/metrics` (Docker Compose publishes the container's internal `8080` on host port `18080`.)
 - Response: JSON document with aggregate counters (`messages_processed_total`, `retries_total`, `escalations_total`, `cache_hits_total`, `ai_calls_total`, `failures_total`) and per-queue counts.
 
 ### Correlation Model (Mixed OTel and Non-OTel Traffic)
@@ -95,15 +106,34 @@ Resource note: the emulator stack starts both the Service Bus emulator and SQL S
 
    ```bash
    ACCEPT_EULA="Y"
-   MSSQL_SA_PASSWORD="YourStrong!Passw0rd"
+   MSSQL_SA_PASSWORD="<a-unique-password-meeting-sql-server-policy>"
    SERVICE_BUS_CONNECTION_STRING="Endpoint=sb://servicebus-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
    ENABLE_DYNAMIC_DISCOVERY="False"
    ```
 
+   Keep `ENABLE_DYNAMIC_DISCOVERY="False"` when using the local emulator. The emulator
+   supports AMQP entity operations but does not provide the HTTPS administration endpoint
+   used by `ServiceBusAdministrationClient`; the agent uses `data/asb_sources.json` for
+   local queue selection instead.
+
+   The password is intentionally not defaulted by Compose. Put it in the repository
+   `.env` file or export it in the shell before starting Docker Compose. A shell variable
+   must be exported for Compose to see it:
+
+   ```bash
+   export MSSQL_SA_PASSWORD='<a-unique-password-meeting-sql-server-policy>'
+   export ACCEPT_EULA=Y
+   ```
+
+   Do not keep an empty `MSSQL_SA_PASSWORD=""` assignment in `.env`. Compose uses the
+   exported shell value when present, otherwise it reads `.env`; an empty assignment can
+   make it unclear which source was used. The Compose services receive the same resolved
+   value, and startup fails if no value is available.
+
    For a lower-footprint local session, also prefer:
 
    ```bash
-   OLLAMA_MODEL="qwen2.5:0.5b"
+   OLLAMA_MODEL="qwen2.5:7b-instruct"
    MAX_CONCURRENT_QUEUES=1
    PREFETCH_COUNT=1
    AGENT_CYCLE_SLEEP_SECONDS=30
@@ -115,6 +145,13 @@ Resource note: the emulator stack starts both the Service Bus emulator and SQL S
    make local-up-emulator
    ```
 
+   The local emulator has stricter entity limits than Azure Service Bus: the default
+   message TTL must be no greater than `PT1H`, and duplicate-detection history must be
+   no greater than `PT5M`. These local values are intentional and are kept separate from
+   the longer Azure notification-queue retention settings.
+
+   May require using host.docker.internal rather than 127.0.0.1 for accessing hosted containers from a hosted dev container.
+
 3. Verify emulator health endpoint:
 
    ```bash
@@ -124,8 +161,19 @@ Resource note: the emulator stack starts both the Service Bus emulator and SQL S
 4. Verify agent health and metrics endpoints:
 
    ```bash
-   curl http://127.0.0.1:8080/health
-   curl http://127.0.0.1:8080/metrics
+   curl http://127.0.0.1:18080/health
+   curl http://127.0.0.1:18080/metrics
+
+   In Docker-outside-of-Docker environments, use the Docker host gateway:
+
+   ```bash
+   curl http://host.docker.internal:18080/health
+   curl http://host.docker.internal:18080/metrics
+   ```
+
+   The local Grafana dashboard uses the Prometheus-compatible endpoint at
+   `http://host.docker.internal:18080/metrics/prometheus` and is available at
+   `http://127.0.0.1:3000`. The Azure Monitor dashboard remains the deployment view.
    ```
 
 5. Run the local emulator smoke test:
@@ -138,7 +186,7 @@ The smoke test sends a message, dead-letters it, and verifies that the agent pro
 
 The smoke command executes inside the running `dlq-agent` container to avoid host networking ambiguity in Docker-outside-of-Docker environments.
 
-If the devcontainer remains unstable under emulator load, run the emulator stack from the host shell rather than from inside the VS Code devcontainer.
+If the devcontainer remains unstable under emulator load, run the emulator stack from the host shell rather than from inside the hosted devcontainer.
 
 In Docker-outside-of-Docker environments, the local Compose stack uses Docker named volumes for agent `data` and `reports` paths to avoid host bind-mount path/permission mismatches.
 
@@ -154,19 +202,79 @@ Ensure you execute these commands from the repository root to avoid `ModuleNotFo
    ```bash
    python -m src.flush_queues
    ```
+
+   For the local Docker emulator, run the command inside the agent container so the
+   Compose hostname `servicebus-emulator` resolves on the Compose network:
+
+   ```bash
+   docker exec autonomous-dlq-agent /opt/venv/bin/python -m src.flush_queues
+   ```
+
+   This clears the configured source queues plus `parking-lot-queue`,
+   `notification-queue`, and `notification-manual-queue`, including each queue's DLQ.
 2. **Start the Consumer Emulator:** Simulates downstream outages and application crashes.
 
    ```bash
-   python -m simulator.consumer
+   docker exec autonomous-dlq-agent /opt/venv/bin/python -m simulator.consumer
    ```
+
+   Run it inside the agent container for local emulator testing so the Compose hostname
+   `servicebus-emulator` resolves correctly. For Azure or a host-reachable Service Bus
+    namespace, `python -m simulator.consumer` can be run from the repository root. When
+    running from the host/devcontainer against the local emulator, override the endpoint
+    with the Docker host gateway:
+
+    ```bash
+    SERVICE_BUS_CONNECTION_STRING="Endpoint=sb://host.docker.internal:5672;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;" \
+       .venv/bin/python -m simulator.consumer
+    ```
+
+    The local emulator has a small connection quota. Stop duplicate agent, consumer,
+    or notification-worker containers before starting another consumer. The simulator
+    also caps itself at one queue worker when `UseDevelopmentEmulator=true`.
 3. **Start the Producer Emulator:** Dispatches synthetic anomalies, malformed schemas, and duplicate correlation IDs to trigger the classification gates.
 
    ```bash
-   python -m simulator.producer
+   SERVICE_BUS_CONNECTION_STRING="Endpoint=sb://host.docker.internal:5672;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;" \
+       .venv/bin/python -m simulator.producer
    ```
+
+   When using the local emulator from the VS Code devcontainer, run the producer
+   inside the Compose network with the container's virtualenv interpreter:
+
+   ```bash
+   docker exec autonomous-dlq-agent /opt/venv/bin/python -m simulator.producer
+   ```
+
+   From the host/devcontainer, use the same `host.docker.internal:5672` connection
+   string override shown for the consumer.
 
 ### Setting up Azure AI Foundry
 The production agent utilises Azure AI Foundry. It connects passwordless via `DefaultAzureCredential`. Ensure the container's User-Assigned Managed Identity is granted the `Cognitive Services OpenAI User` role on the Foundry resource. Required environment variables: `AI_PROVIDER="AZURE_FOUNDRY"`, `AZURE_FOUNDRY_ENDPOINT`, and `AZURE_FOUNDRY_DEPLOYMENT_NAME`.
+
+#### Local Foundry Authentication
+
+Selecting `AI_PROVIDER="AZURE_FOUNDRY"` locally does not provide credentials by itself.
+`DefaultAzureCredential` must find one of the following sources:
+
+- An authenticated Azure CLI session (`az login`) visible to the process.
+- A complete service-principal environment configuration: `AZURE_TENANT_ID`,
+  `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET`.
+- A local developer credential supported by the installed Azure tooling.
+- A managed identity, which is normally available only when running in Azure.
+
+For the Docker Compose agent, host Azure CLI credentials are not automatically available
+inside the container. For local testing, prefer a service principal supplied through an
+uncommitted `.env` file or run the agent directly in the authenticated host environment.
+Never commit `AZURE_CLIENT_SECRET`.
+
+The endpoint must also be reachable from the process. The placeholder value in `.env`
+(`.../your-endpoint`) is rejected at startup. A private-link Foundry endpoint requires
+the host or container network to have the corresponding private DNS and VNet access;
+running the local emulator does not provide that network path.
+
+For offline local development, use `AI_PROVIDER="OLLAMA"` instead of repeatedly retrying
+Foundry authentication failures.
 
 **Automation Note:** This configuration is fully automated. The Phase 2 deployment module provisions the required `Cognitive Services OpenAI User` role bindings. Furthermore, the Phase 3 (`03-configure-jumpbox.sh`) and Phase 4 (`05-deploy-agent.sh`) bash scripts dynamically extract the `AZURE_FOUNDRY_ENDPOINT` from the remote state and inject it into the local `.env` and Container App environments, preventing manual configuration drift.
 
@@ -253,7 +361,7 @@ Proof of successful User-Assigned token acquisition from the container trace:
 ### 3. AI Inference Causes AMQP Connection Drops (Local Dev Only)
 **Symptom:** The local agent logs `amqp:connection:forced` followed by a cascade of `ValueError: Link already closed` errors.
 **Root Cause:** When running locally against an offline LLM (Ollama), inference may consume 100% of the CPU, starving the Azure AMQP heartbeat thread. Azure detects the dropped heartbeat and severs the remote connection.
-**Resolution:** Downgrade the local Ollama model to a lower parameter count (e.g., `qwen2.5:0.5b`) to reduce inference latency below the Azure timeout threshold. If GPU and VRAM are available, use a larger model matched to memory capacity for better classification quality: `qwen2.5:7b-instruct` or `llama3.1:8b-instruct-q4_K_M` (>= 8 GB VRAM), `qwen2.5:14b-instruct-q4_K_M` (>= 16 GB VRAM). This issue does not occur in production as execution is routed to the external Azure AI Foundry endpoint.
+**Resolution:** Use a model that is installed locally and sized for the available hardware such as `qwen2.5:7b-instruct`; for lower-resource hosts, install a smaller model and set `OLLAMA_MODEL` accordingly. If GPU and VRAM are available, use a larger model matched to memory capacity: `llama3.1:8b-instruct-q4_K_M` (>= 8 GB VRAM) or `qwen2.5:14b-instruct-q4_K_M` (>= 16 GB VRAM). This issue does not occur in production as execution is routed to the external Azure AI Foundry endpoint.
 
 ## 7. Quality Gates & PII Handling
 

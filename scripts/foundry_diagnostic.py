@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Diagnose Azure Foundry behavior from a jumpbox or local shell.
+"""Diagnose Azure Foundry behaviour from a jumpbox or local shell.
 
 This script is intentionally narrow:
 - It uses the same AzureFoundryEngine call path as the running app.
@@ -23,7 +23,6 @@ from azure.ai.inference.models import SystemMessage, UserMessage
 from azure.identity import DefaultAzureCredential
 
 from src.ai_client import AzureFoundryEngine
-
 
 LOGGER = logging.getLogger("foundry_diagnostic")
 
@@ -108,7 +107,11 @@ def _resolve_foundry_env() -> None:
             text=True,
             timeout=10,
         ).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
         tf_output = ""
 
     if not tf_output:
@@ -119,12 +122,12 @@ def _resolve_foundry_env() -> None:
         endpoint = tf_output
         print("[diag] Resolved AZURE_FOUNDRY_ENDPOINT from Terraform output.")
 
-    parsed_name = _extract_deployment_name(tf_output) or _extract_deployment_name(endpoint)
+    parsed_name = _extract_deployment_name(tf_output) or _extract_deployment_name(
+        endpoint
+    )
     if parsed_name:
         os.environ["AZURE_FOUNDRY_DEPLOYMENT_NAME"] = parsed_name
-        print(
-            "[diag] Resolved AZURE_FOUNDRY_DEPLOYMENT_NAME from Terraform output."
-        )
+        print("[diag] Resolved AZURE_FOUNDRY_DEPLOYMENT_NAME from Terraform output.")
 
 
 def _verify_token() -> None:
@@ -134,9 +137,7 @@ def _verify_token() -> None:
     credential = DefaultAzureCredential()
     token = credential.get_token("https://cognitiveservices.azure.com/.default")
     elapsed = time.monotonic() - start
-    print(
-        f"[diag] Token acquired in {elapsed:.2f}s; expires_on={token.expires_on}"
-    )
+    print(f"[diag] Token acquired in {elapsed:.2f}s; expires_on={token.expires_on}")
 
 
 def _run_engine_call(client_id: str, run_label: str) -> int:
@@ -219,12 +220,14 @@ def _run_raw_call(client_id: str, run_label: str, force_json_object: str) -> int
     print("[diag] Running direct ChatCompletionsClient.complete...")
     engine = AzureFoundryEngine()
     messages = [
-        SystemMessage(content=f"""You are an operations support engineer managing an Azure Service Bus environment.
+        SystemMessage(
+            content=f"""You are an operations support engineer managing an Azure Service Bus environment.
 A message has fallen into the Dead Letter Queue (DLQ).
 Analyse the raw payload to deduce why it failed and recommend how to handle it.
 
 --- INSTRUCTIONS ---
-You must output YOUR ENTIRE RESPONSE as a single, valid JSON object. Do not include conversational text."""),
+You must output YOUR ENTIRE RESPONSE as a single, valid JSON object. Do not include conversational text."""
+        ),
         UserMessage(
             content=engine._build_prompt(  # Intentional reuse of the app prompt.
                 client_id=client_id,
@@ -267,7 +270,11 @@ You must output YOUR ENTIRE RESPONSE as a single, valid JSON object. Do not incl
         except Exception as exc:
             message = str(exc)
             message_lower = message.lower()
-            call_mode = "model_extras.max_completion_tokens" if use_model_extras else "max_tokens"
+            call_mode = (
+                "model_extras.max_completion_tokens"
+                if use_model_extras
+                else "max_tokens"
+            )
             print(f"[diag] Raw call with {call_mode} failed: {message}")
 
             if (
@@ -276,7 +283,9 @@ You must output YOUR ENTIRE RESPONSE as a single, valid JSON object. Do not incl
                 and "max_tokens" in message
             ):
                 use_model_extras = True
-                print("[diag] Retrying raw call with model_extras.max_completion_tokens...")
+                print(
+                    "[diag] Retrying raw call with model_extras.max_completion_tokens..."
+                )
                 continue
 
             if (

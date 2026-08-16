@@ -92,6 +92,29 @@ variable "app_secret_env_var_secret_names" {
   default     = {}
 }
 
+variable "webhook_registry" {
+  description = "Non-secret client webhook metadata. Secret values are provisioned separately in the runtime Key Vault."
+  type = map(object({
+    endpoint    = string
+    secret_name = string
+    enabled     = optional(bool, true)
+    version     = optional(string, "v1")
+  }))
+  default = {}
+}
+
+variable "webhook_secrets_vault_name" {
+  description = "Runtime Key Vault name for webhook client secrets."
+  type        = string
+  default     = ""
+}
+
+variable "app_configuration_deployer_object_id" {
+  description = "Stable Entra object ID that owns Terraform-created App Configuration role assignments. Set this to the original deployment principal, not the jumpbox runtime identity."
+  type        = string
+  default     = ""
+}
+
 variable "container_image_tag" {
   type        = string
   description = "Immutable image tag for the router-agent container deployment."

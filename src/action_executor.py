@@ -29,6 +29,7 @@ from azure.servicebus import (
     ServiceBusSender,
 )
 
+from src.notification import build_notification_event
 from src.resilience import backoff_sleep
 
 
@@ -51,9 +52,6 @@ class ActionCommand(ABC):
     # If the send succeeds but the complete fails, the message will be duplicated in the main queue.
     # This is a known limitation of the current design and may require a more robust transactional approach
     # or idempotency handling to prevent duplicates in high-throughput scenarios.
-
-    # TODO: The drop path swallows completion errors, which can leave a message to reappear even though the code logs it as dropped.
-    # This is a known limitation and may require additional error handling or alerting to ensure that dropped messages are truly removed from the DLQ.
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -104,6 +102,31 @@ class ActionCommand(ABC):
                 f"{operation_name} failed without capturing an exception."
             )
         raise last_exc
+
+    def _complete_message(self, operation_name: str, receiver, message) -> None:
+        """Complete a message and propagate failure to the batch safety boundary.
+
+        Args:
+            operation_name (str): A descriptive name for the operation, used in logging.
+            receiver (ServiceBusReceiver): The receiver instance for the DLQ.
+            message (ServiceBusReceivedMessage): The message to complete.
+        """
+        self._broker_op(operation_name, receiver.complete_message, message)
+
+    @staticmethod
+    def _current_resubmit_count(properties: Dict[Union[str, bytes], Any]) -> int:
+        """Return a non-negative retry count even when broker properties are malformed.
+
+        Args:
+            properties (Dict[Union[str, bytes], Any]): The application properties of the message.
+        Returns:
+            int: The current resubmit count, defaulting to 0 if not present or malformed.
+        """
+        raw_count = properties.get("Resubmit-Count", 0)
+        try:
+            return max(0, int(raw_count))
+        except (TypeError, ValueError):
+            return 0
 
     @abstractmethod
     def execute(
@@ -165,7 +188,7 @@ class ActionCommand(ABC):
 
         # Loop Prevention Protocol
         count_key = "Resubmit-Count"
-        current_count = int(safe_properties.get(count_key, 0))
+        current_count = self._current_resubmit_count(safe_properties)
         safe_properties[count_key] = current_count + 1
         safe_properties["OriginalDeadLetterReason"] = (
             original.dead_letter_reason or "Unknown"
@@ -260,24 +283,23 @@ class DropCommand(ActionCommand):
         self.logger.info(
             f"Dropping message {message.message_id}. Reason: {message.dead_letter_reason}"
         )
-        try:
-            self._broker_op("complete(drop)", receiver.complete_message, message)
-        except Exception as e:
-            self.logger.error(
-                f"Network error completing dropped message {message.message_id}: {str(e)}",
-                exc_info=True,
-            )
+        self._complete_message("complete(drop)", receiver, message)
 
 
 class DropAndNotifyCommand(ActionCommand):
     """
     Executes a high-severity drop action for messages that require immediate attention.
-    This command completes the message in the DLQ and logs a warning for alerting purposes.
+    This command publishes a durable notification event and then completes the message in the DLQ.
     Attributes:
         logger (logging.Logger): Logger instance for logging action execution details.
     Methods:
         execute(message, receiver, sender, parking_lot_sender, pattern, safe_defaults_map): Executes the drop and notify action on the broker.
     """
+
+    def __init__(self, notification_sender=None, source_queue: Optional[str] = None):
+        super().__init__()
+        self.notification_sender = notification_sender
+        self.source_queue = source_queue
 
     def execute(
         self,
@@ -289,7 +311,7 @@ class DropAndNotifyCommand(ActionCommand):
         safe_defaults_map: Optional[dict] = None,
     ) -> None:
         """
-        Executes the drop and notify action by completing the message in the DLQ and logging a high-severity warning.
+        Executes the drop and notify action by publishing an event before completing the message in the DLQ.
         Args:
             message (Any): The Service Bus message to drop and notify.
             receiver (ServiceBusReceiver): The receiver instance for the DLQ.
@@ -298,18 +320,30 @@ class DropAndNotifyCommand(ActionCommand):
             pattern (str): The pattern to match for the drop and notify action.
             safe_defaults_map (Optional[dict]): A dictionary of safe default values for message properties.
         """
-        self.logger.warning(
-            f"[ALERT DISPATCHED] High severity drop executed for message {message.message_id}."
+        if self.notification_sender is None:
+            raise RuntimeError(
+                "drop_and_notify requires a configured notification sender"
+            )
+
+        event = build_notification_event(message, pattern, self.source_queue)
+        alert = ServiceBusMessage(
+            body=json.dumps(event).encode("utf-8"),
+            content_type="application/json",
+            subject="DeadLetterMessageDropped",
+            message_id=event["event_id"],
+            application_properties={
+                "event_type": event["event_type"],
+                "schema_version": event["schema_version"],
+                "client_id": event["client_id"],
+            },
         )
-        try:
-            self._broker_op(
-                "complete(drop_and_notify)", receiver.complete_message, message
-            )
-        except Exception as e:
-            self.logger.error(
-                f"Network error completing drop_and_notify message {message.message_id}: {str(e)}",
-                exc_info=True,
-            )
+        self._broker_op(
+            "send(notification)", self.notification_sender.send_messages, alert
+        )
+        self.logger.info(
+            f"Notification event {event['event_id']} published for message {message.message_id}."
+        )
+        self._broker_op("complete(drop_and_notify)", receiver.complete_message, message)
 
 
 class RetryCommand(ActionCommand):
@@ -337,13 +371,7 @@ class RetryCommand(ActionCommand):
             self.logger.info(
                 f"Successfully cloned and resubmitted message {message.message_id} to main queue."
             )
-            try:
-                self._broker_op("complete(retry)", receiver.complete_message, message)
-            except Exception as complete_err:
-                self.logger.error(
-                    f"Network error completing original message {message.message_id} after resubmit: {str(complete_err)}",
-                    exc_info=True,
-                )
+            self._complete_message("complete(retry)", receiver, message)
 
         except Exception as e:
             self.logger.error(
@@ -441,24 +469,16 @@ class FixAndRetryCommand(ActionCommand):
 
             fixed_body_bytes = json.dumps(payload_dict).encode("utf-8")
             new_msg = self._clone_for_resubmit(message, new_body=fixed_body_bytes)
-            if new_msg.application_properties is None:
-                new_msg.application_properties = {}
-            new_msg.application_properties["AutoFixed"] = "True"
+            application_properties = new_msg.application_properties or {}
+            application_properties["AutoFixed"] = "True"
+            new_msg.application_properties = application_properties
 
             self._broker_op("send(fix_and_retry)", sender.send_messages, new_msg)
             self.logger.info(
                 f"Successfully auto-healed and resubmitted message {message.message_id}."
             )
 
-            try:
-                self._broker_op(
-                    "complete(fix_and_retry)", receiver.complete_message, message
-                )
-            except Exception as complete_err:
-                self.logger.error(
-                    f"Network error completing original message {message.message_id} after auto-heal: {str(complete_err)}",
-                    exc_info=True,
-                )
+            self._complete_message("complete(fix_and_retry)", receiver, message)
 
         except json.JSONDecodeError:
             self.logger.error(
@@ -524,15 +544,7 @@ class EscalateCommand(ActionCommand):
             new_msg = self._clone_for_resubmit(message)
             self._broker_op("send(escalate)", parking_lot_sender.send_messages, new_msg)
 
-            try:
-                self._broker_op(
-                    "complete(escalate)", receiver.complete_message, message
-                )
-            except Exception as complete_err:
-                self.logger.error(
-                    f"Network error completing message {message.message_id} after escalation: {str(complete_err)}",
-                    exc_info=True,
-                )
+            self._complete_message("complete(escalate)", receiver, message)
 
         except Exception as e:
             self.logger.error(
@@ -569,6 +581,8 @@ class ActionRouter:
         receiver: ServiceBusReceiver,
         sender: ServiceBusSender,
         parking_lot_sender: ServiceBusSender,
+        notification_sender: Optional[ServiceBusSender] = None,
+        source_queue: Optional[str] = None,
     ):
         """
         Initialises the ActionRouter with the provided Service Bus receiver and sender instances.
@@ -580,6 +594,8 @@ class ActionRouter:
         self.receiver = receiver
         self.sender = sender
         self.parking_lot_sender = parking_lot_sender
+        self.notification_sender = notification_sender
+        self.source_queue = source_queue
 
         # TODO: The current command mapping is static and hardcoded. For future extensibility (far future capability),
         # consider implementing a dynamic plugin system or configuration-driven approach to allow new commands to be registered without modifying the core codebase.
@@ -590,7 +606,9 @@ class ActionRouter:
 
         self._commands = {
             "drop": DropCommand(),
-            "drop_and_notify": DropAndNotifyCommand(),
+            "drop_and_notify": DropAndNotifyCommand(
+                notification_sender=notification_sender, source_queue=source_queue
+            ),
             "retry": RetryCommand(),
             "fix_and_retry": FixAndRetryCommand(),
             "escalate": EscalateCommand(),

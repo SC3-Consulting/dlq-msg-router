@@ -9,3 +9,11 @@ output "agent_runtime_principal_id" {
 output "agent_runtime_client_id" {
   value = azurerm_user_assigned_identity.agent_runtime.client_id
 }
+
+output "notification_runtime_identity_id" {
+  value = azurerm_user_assigned_identity.notification_runtime.id
+}
+
+output "notification_runtime_client_id" {
+  value = azurerm_user_assigned_identity.notification_runtime.client_id
+}

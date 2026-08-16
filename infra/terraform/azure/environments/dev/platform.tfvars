@@ -16,8 +16,11 @@ agent_max_replicas           = 1
 
 app_env_vars = {
   ENABLE_DYNAMIC_DISCOVERY                = "True"
-  EXCLUDED_QUEUES                         = "parking-lot-queue"
+  EXCLUDED_QUEUES                         = "parking-lot-queue,notification-queue,notification-manual-queue"
   PARKING_LOT_QUEUE_NAME                  = "parking-lot-queue"
+  NOTIFICATION_ENABLED                    = "true"
+  NOTIFICATION_QUEUE_NAME                 = "notification-queue"
+  NOTIFICATION_MANUAL_QUEUE_NAME          = "notification-manual-queue"
   MAX_CONCURRENT_QUEUES                   = "5"
   ASB_MAX_MESSAGE_COUNT                   = "10"
   ASB_MAX_WAIT_TIME                       = "5"
@@ -50,6 +53,20 @@ query_model = {
 #   SERVICE_BUS_CONNECTION_STRING = "service-bus-connection-string-dev"
 # }
 app_secret_env_var_secret_names = {}
+
+# Non-secret registry metadata. Create each referenced secret in the runtime Key Vault separately.
+webhook_registry = {
+  Client_A = {
+    endpoint    = "https://client.example/notifications"
+    secret_name = "client-a-hmac"
+    enabled     = true
+    version     = "v1"
+  }
+}
+
+# Stable object ID of the original Terraform deployment user. Keep this stable when
+# running the App Configuration key apply from the jumpbox managed identity.
+app_configuration_deployer_object_id = "601e769e-2e48-431f-bff3-fb9f69ace993"
 
 tags = {
   environment = "dev"

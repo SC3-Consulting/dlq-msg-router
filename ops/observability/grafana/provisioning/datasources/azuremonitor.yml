@@ -5,7 +5,7 @@ datasources:
     uid: azure-monitor
     type: grafana-azure-monitor-datasource
     access: proxy
-    isDefault: true
+    isDefault: false
     editable: false
     jsonData:
       azureAuthType: msi

@@ -1,0 +1,10 @@
+apiVersion: 1
+
+datasources:
+  - name: Local Agent Metrics
+    uid: local-prometheus
+    type: prometheus
+    access: proxy
+    url: http://host.docker.internal:18080
+    isDefault: true
+    editable: false

@@ -22,6 +22,16 @@ locals {
         "privatelink.servicebus.windows.net"
       ]
     }
+    app_configuration = {
+      resource_id      = var.app_configuration_id
+      subresource_name = "configurationStores"
+      zone_names       = ["privatelink.azconfig.io"]
+    }
+    webhook_key_vault = {
+      resource_id      = var.webhook_key_vault_id
+      subresource_name = "vault"
+      zone_names       = ["privatelink.vaultcore.azure.net"]
+    }
   }
 
 }

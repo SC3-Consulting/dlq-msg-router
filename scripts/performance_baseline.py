@@ -107,7 +107,9 @@ def _build_classifier(tmp_db_path: str) -> AutonomousDLQClassifier:
     )
 
 
-def _run_scenario(classifier: AutonomousDLQClassifier, message_count: int, ai_ratio: float) -> Dict:
+def _run_scenario(
+    classifier: AutonomousDLQClassifier, message_count: int, ai_ratio: float
+) -> Dict:
     latencies_ms: List[float] = []
     ai_count = 0
 
@@ -185,10 +187,23 @@ def _estimate_ai_cost(ai_message_count: int) -> Dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run local DLQ performance baseline benchmark")
-    parser.add_argument("--sizes", default="100,500,1000", help="Comma-separated message batch sizes")
-    parser.add_argument("--ai-ratio", type=float, default=0.20, help="Fraction of messages routed to AI fallback")
-    parser.add_argument("--output", default="reports/performance_baseline.json", help="Path to output JSON report")
+    parser = argparse.ArgumentParser(
+        description="Run local DLQ performance baseline benchmark"
+    )
+    parser.add_argument(
+        "--sizes", default="100,500,1000", help="Comma-separated message batch sizes"
+    )
+    parser.add_argument(
+        "--ai-ratio",
+        type=float,
+        default=0.20,
+        help="Fraction of messages routed to AI fallback",
+    )
+    parser.add_argument(
+        "--output",
+        default="reports/performance_baseline.json",
+        help="Path to output JSON report",
+    )
     args = parser.parse_args()
 
     sizes = [int(s.strip()) for s in args.sizes.split(",") if s.strip()]

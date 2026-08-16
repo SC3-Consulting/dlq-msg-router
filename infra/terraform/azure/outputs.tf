@@ -1,3 +1,14 @@
+output "webhook_secrets_key_vault_uri" {
+  value = azurerm_key_vault.webhook_secrets.vault_uri
+}
+
+output "webhook_secrets_key_vault_name" {
+  value = azurerm_key_vault.webhook_secrets.name
+}
+
+output "webhook_registry_app_configuration_endpoint" {
+  value = module.data_services.app_configuration_endpoint
+}
 output "acr_login_server" {
   description = "The login server for the Azure Container Registry"
   value       = module.data_services.acr_login_server

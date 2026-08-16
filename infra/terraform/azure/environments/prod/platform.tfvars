@@ -16,7 +16,7 @@ agent_max_replicas           = 2
 
 app_env_vars = {
   ENABLE_DYNAMIC_DISCOVERY                = "True"
-  EXCLUDED_QUEUES                         = "parking-lot-queue"
+  EXCLUDED_QUEUES                         = "parking-lot-queue,notification-queue,notification-manual-queue"
   PARKING_LOT_QUEUE_NAME                  = "parking-lot-queue"
   MAX_CONCURRENT_QUEUES                   = "5"
   ASB_MAX_MESSAGE_COUNT                   = "10"
@@ -45,6 +45,8 @@ query_model = {
 }
 
 app_secret_env_var_secret_names = {}
+
+webhook_registry = {}
 
 tags = {
   environment = "prod"

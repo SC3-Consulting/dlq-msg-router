@@ -13,15 +13,25 @@
 #
 # PARAMETERS
 #   -e, --environment   Target deployment environment (dev, test, prod). Default: dev
+#   --sync-mode         Repository sync mode: git (default) or rsync.
 ###############################################################################
 
 set -euo pipefail
 
 ENVIRONMENT="dev"
+SYNC_MODE="git"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -e|--environment) ENVIRONMENT="$2"; shift 2 ;;
+    --sync-mode)
+      if [[ $# -lt 2 || "$2" != "git" && "$2" != "rsync" ]]; then
+        echo "[-] Error: --sync-mode must be 'git' or 'rsync'." >&2
+        exit 1
+      fi
+      SYNC_MODE="$2"
+      shift 2
+      ;;
     *) echo "[-] Unknown execution flag: $1" >&2; exit 1 ;;
   esac
 done
@@ -122,6 +132,7 @@ readonly BOOTSTRAP_VARS_CONTENT="$(cat "${BOOTSTRAP_VARS_FILE}")"
 
 readonly RG_NAME="rg-dlq-msg-router-${ENVIRONMENT}"
 readonly VM_NAME="vm-jumpbox-${ENVIRONMENT}"
+readonly SYNC_MODE
 
 echo "==> Resolving Log Analytics workspace ID from resource group ${RG_NAME}..."
 if ! LOG_ANALYTICS_WORKSPACE_COUNT="$(az monitor log-analytics workspace list \
@@ -159,37 +170,50 @@ if [[ -z "${LOG_ANALYTICS_WORKSPACE_ID}" ]]; then
   exit 1
 fi
 
-echo "==> Resolving active Git repository and branch..."
+echo "==> Resolving local repository and branch..."
 cd "${ROOT_DIR}"
-readonly REPO_URL=$(git config --get remote.origin.url || true)
-if [[ -z "${REPO_URL}" ]]; then
-  echo "[-] Error: Remote origin URL not configured. Set up a valid git remote before running this script." >&2
-  exit 1
-fi
-readonly REPO_NAME=$(basename -s .git "${REPO_URL}")
-readonly CURRENT_BRANCH=$(git branch --show-current || true)
-readonly TARGET_BRANCH="${TARGET_BRANCH:-main}"
+REPO_URL="$(git config --get remote.origin.url || true)"
+CURRENT_BRANCH="$(git branch --show-current || true)"
+TARGET_BRANCH="${TARGET_BRANCH:-main}"
 
-if [[ -z "${CURRENT_BRANCH}" ]]; then
-  echo "[-] Error: Unable to determine current git branch. Ensure you are on a branch, not a detached HEAD." >&2
-  exit 1
+if [[ "${SYNC_MODE}" == "git" ]]; then
+  if [[ -z "${REPO_URL}" ]]; then
+    echo "[-] Error: Remote origin URL not configured. Set up a valid git remote before running this script." >&2
+    exit 1
+  fi
+  REPO_NAME="$(basename -s .git "${REPO_URL}")"
+  if [[ -z "${CURRENT_BRANCH}" ]]; then
+    echo "[-] Error: Unable to determine current git branch. Ensure you are on a branch, not a detached HEAD." >&2
+    exit 1
+  fi
+  if [[ -z "${TARGET_BRANCH// }" ]]; then
+    echo "[-] Error: TARGET_BRANCH is empty. Set a valid branch name (for example: export TARGET_BRANCH=main)." >&2
+    exit 1
+  fi
+  if [[ ! "${TARGET_BRANCH}" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    echo "[-] Error: TARGET_BRANCH '${TARGET_BRANCH}' contains invalid characters." >&2
+    echo "[-] Allowed characters: letters, numbers, dot, underscore, dash, slash." >&2
+    exit 1
+  fi
+  if [[ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]]; then
+    echo "[-] Error: Branch safeguard failed. Current branch is '${CURRENT_BRANCH}', expected '${TARGET_BRANCH}'." >&2
+    echo "[-] Set TARGET_BRANCH to override the default expectation (main), for example: export TARGET_BRANCH=release/2026-07." >&2
+    exit 1
+  fi
+else
+  REPO_NAME="$(basename "${ROOT_DIR}")"
+  CURRENT_BRANCH="rsync-local-tree"
 fi
+readonly REPO_URL REPO_NAME CURRENT_BRANCH TARGET_BRANCH
 
-if [[ -z "${TARGET_BRANCH// }" ]]; then
-  echo "[-] Error: TARGET_BRANCH is empty. Set a valid branch name (for example: export TARGET_BRANCH=main)." >&2
-  exit 1
-fi
-
-if [[ ! "${TARGET_BRANCH}" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-  echo "[-] Error: TARGET_BRANCH '${TARGET_BRANCH}' contains invalid characters." >&2
-  echo "[-] Allowed characters: letters, numbers, dot, underscore, dash, slash." >&2
-  exit 1
-fi
-
-if [[ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]]; then
-  echo "[-] Error: Branch safeguard failed. Current branch is '${CURRENT_BRANCH}', expected '${TARGET_BRANCH}'." >&2
-  echo "[-] Set TARGET_BRANCH to override the default expectation (main), for example: export TARGET_BRANCH=release/2026-07." >&2
-  exit 1
+if [[ "${SYNC_MODE}" == "git" ]]; then
+  echo "==> Repository sync mode: git (remote clone/fetch)."
+else
+  if ! command -v rsync >/dev/null 2>&1; then
+    echo "[-] Error: rsync is required for --sync-mode rsync." >&2
+    exit 1
+  fi
+  echo "==> Repository sync mode: rsync (local tree over Bastion tunnel)."
 fi
 
 echo "==> Initiating secure Bastion SSH payload delivery to ${VM_NAME}..."
@@ -220,7 +244,7 @@ curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash >/dev/null 2>&1
 
 echo "    [+] (Remote) Updating APT packages and installing Git, Snap, Terraform and Python toolchains..."
 sudo apt-get update >/dev/null 2>&1
-sudo apt-get install -y git curl snapd python3-pip python3-venv ca-certificates gnupg lsb-release >/dev/null 2>&1
+sudo apt-get install -y git rsync curl snapd python3-pip python3-venv ca-certificates gnupg lsb-release >/dev/null 2>&1
 sudo snap install terraform --classic >/dev/null 2>&1
 
 echo "    [+] (Remote) Purging legacy Docker and Compose packages to prevent v1 runtime conflicts..."
@@ -248,19 +272,28 @@ sudo usermod -aG docker azureuser
 sudo systemctl enable docker >/dev/null 2>&1 || true
 sudo systemctl start docker >/dev/null 2>&1 || true
 
-echo "    [+] (Remote) Synchronising codebase from ${REPO_URL} (Branch: ${CURRENT_BRANCH})..."
-if [[ ! -d "${REPO_NAME}" ]]; then
-  git clone "${REPO_URL}" >/dev/null 2>&1
-fi
+if [[ "${SYNC_MODE}" == "git" ]]; then
+  echo "    [+] (Remote) Synchronising codebase from ${REPO_URL} (Branch: ${CURRENT_BRANCH})..."
+  if [[ ! -d "${REPO_NAME}" ]]; then
+    git clone "${REPO_URL}" >/dev/null 2>&1
+  fi
 
-cd "${REPO_NAME}"
-git fetch --all >/dev/null 2>&1
-if ! git ls-remote --heads origin "${CURRENT_BRANCH}" | grep -q "refs/heads/${CURRENT_BRANCH}"; then
-  echo "[-] Error: Remote branch ${CURRENT_BRANCH} does not exist on origin. Push it first." >&2
-  exit 1
+  cd "${REPO_NAME}"
+  git fetch --all >/dev/null 2>&1
+  if ! git ls-remote --heads origin "${CURRENT_BRANCH}" | grep -q "refs/heads/${CURRENT_BRANCH}"; then
+    echo "[-] Error: Remote branch ${CURRENT_BRANCH} does not exist on origin. Push it first." >&2
+    exit 1
+  fi
+  git checkout "${CURRENT_BRANCH}" >/dev/null 2>&1
+  git pull origin "${CURRENT_BRANCH}" >/dev/null 2>&1
+else
+  echo "    [+] (Remote) Using repository synchronized by local rsync..."
+  if [[ ! -d "${REPO_NAME}" ]]; then
+    echo "[-] Error: Expected rsync target '${REPO_NAME}' does not exist on the jumpbox." >&2
+    exit 1
+  fi
+  cd "${REPO_NAME}"
 fi
-git checkout "${CURRENT_BRANCH}" >/dev/null 2>&1
-git pull origin "${CURRENT_BRANCH}" >/dev/null 2>&1
 
 echo "    [+] (Remote) Constructing Python virtual environment..."
 python3 -m venv .venv
@@ -367,6 +400,33 @@ fi
 if ! kill -0 ${TUNNEL_PID} >/dev/null 2>&1; then
   echo "[-] Error: Bastion tunnel process exited early." >&2
   exit 1
+fi
+
+if [[ "${SYNC_MODE}" == "rsync" ]]; then
+  echo "==> Preparing rsync on ${VM_NAME} over the Bastion tunnel..."
+  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -i "${SSH_KEY_PATH}" -p "${LOCAL_PORT}" azureuser@localhost \
+    "sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y rsync >/dev/null 2>&1 && mkdir -p '${REPO_NAME}'"
+
+  echo "==> Synchronising local repository to ${VM_NAME} over the Bastion tunnel..."
+  rsync -az --delete \
+    --exclude='.git/' \
+    --exclude='.venv/' \
+    --exclude='__pycache__/' \
+    --exclude='.mypy_cache/' \
+    --exclude='.pytest_cache/' \
+    --exclude='reports/' \
+    --exclude='.env' \
+    --exclude='.azure/' \
+    --exclude='*.db' \
+    --exclude='*.db.*' \
+    -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${SSH_KEY_PATH} -p ${LOCAL_PORT}" \
+    "${ROOT_DIR}/" "azureuser@localhost:${REPO_NAME}/"
+
+  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -i "${SSH_KEY_PATH}" -p "${LOCAL_PORT}" azureuser@localhost \
+    "test -f '${REPO_NAME}/infra/terraform/azure/environments/${ENVIRONMENT}/platform.tfvars'"
+  echo "==> Verified synchronized platform.tfvars on ${VM_NAME}."
 fi
 
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "${SSH_KEY_PATH}" -p "${LOCAL_PORT}" azureuser@localhost "bash -s" <<EOF

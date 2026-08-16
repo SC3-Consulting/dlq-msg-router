@@ -52,3 +52,10 @@ variable "agent_client_id" {
   description = "The Client ID of the User Assigned Managed Identity"
   type        = string
 }
+
+variable "notification_runtime_identity_id" { type = string }
+variable "notification_client_id" { type = string }
+variable "notification_app_env_vars" {
+  type    = map(string)
+  default = {}
+}

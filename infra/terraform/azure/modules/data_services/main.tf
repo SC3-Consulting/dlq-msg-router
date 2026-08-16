@@ -81,3 +81,60 @@ resource "azurerm_servicebus_queue" "payment" {
   dead_lettering_on_message_expiration = true
   max_delivery_count                   = 10
 }
+
+resource "azurerm_servicebus_queue" "notification" {
+  name                                    = "notification-queue"
+  namespace_id                            = azurerm_servicebus_namespace.this.id
+  dead_lettering_on_message_expiration    = true
+  default_message_ttl                     = "P7D"
+  max_delivery_count                      = 10
+  requires_duplicate_detection            = true
+  duplicate_detection_history_time_window = "PT10M"
+}
+
+resource "azurerm_servicebus_queue" "notification_manual" {
+  name                                    = "notification-manual-queue"
+  namespace_id                            = azurerm_servicebus_namespace.this.id
+  dead_lettering_on_message_expiration    = true
+  default_message_ttl                     = "P30D"
+  max_delivery_count                      = 10
+  requires_duplicate_detection            = true
+  duplicate_detection_history_time_window = "PT10M"
+}
+
+resource "azurerm_app_configuration" "webhook_registry" {
+  name                  = substr(lower("appcfg-dlq-${var.suffix}-${random_string.servicebus_suffix.result}"), 0, 50)
+  resource_group_name   = var.resource_group_name
+  location              = var.location
+  sku                   = "standard"
+  public_network_access = "Disabled"
+  tags                  = var.tags
+}
+
+resource "azurerm_role_assignment" "app_configuration_data_owner" {
+  scope                = azurerm_app_configuration.webhook_registry.id
+  role_definition_name = "App Configuration Data Owner"
+  principal_id         = var.app_configuration_data_owner_principal_id
+}
+
+resource "azurerm_role_assignment" "app_configuration_contributor" {
+  scope                = azurerm_app_configuration.webhook_registry.id
+  role_definition_name = "App Configuration Contributor"
+  principal_id         = var.app_configuration_management_principal_id
+}
+
+resource "azurerm_app_configuration_key" "webhook_registry" {
+  for_each = length(var.webhook_registry) > 0 ? { registry = var.webhook_registry } : {}
+
+  depends_on = [
+    azurerm_role_assignment.app_configuration_data_owner,
+    azurerm_role_assignment.app_configuration_contributor,
+  ]
+
+  configuration_store_id = azurerm_app_configuration.webhook_registry.id
+  key                    = "webhook-registry"
+  type                   = "kv"
+  value                  = jsonencode(var.webhook_registry)
+  content_type           = "application/json"
+  label                  = var.suffix
+}

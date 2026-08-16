@@ -14,6 +14,20 @@ resource "azurerm_container_app_environment" "this" {
   }
 }
 
+resource "azurerm_monitor_diagnostic_setting" "container_app_environment_logs" {
+  name                       = "diag-container-app-environment"
+  target_resource_id         = azurerm_container_app_environment.this.id
+  log_analytics_workspace_id = var.log_analytics_workspace_id
+
+  enabled_log {
+    category = "ContainerAppConsoleLogs"
+  }
+
+  enabled_log {
+    category = "ContainerAppSystemLogs"
+  }
+}
+
 resource "azurerm_container_app" "dlq_agent" {
   name                         = "ca-dlq-msg-router-${var.suffix}"
   resource_group_name          = var.resource_group_name
@@ -69,6 +83,51 @@ resource "azurerm_container_app" "dlq_agent" {
       env {
         name  = "AZURE_CLIENT_ID"
         value = var.agent_client_id
+      }
+    }
+  }
+
+  tags = var.tags
+}
+
+resource "azurerm_container_app" "notification_worker" {
+  name                         = "ca-dlq-notifications-${var.suffix}"
+  resource_group_name          = var.resource_group_name
+  container_app_environment_id = azurerm_container_app_environment.this.id
+  revision_mode                = "Single"
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [var.notification_runtime_identity_id]
+  }
+
+  registry {
+    server   = var.acr_login_server
+    identity = var.notification_runtime_identity_id
+  }
+
+  template {
+    min_replicas = var.min_replicas
+    max_replicas = var.max_replicas
+
+    container {
+      name    = "notification-worker"
+      image   = "${var.acr_login_server}/router-agent:${var.container_image_tag}"
+      command = ["python", "-m", "src.run_notifications"]
+      cpu     = var.container_cpu
+      memory  = var.container_memory
+
+      dynamic "env" {
+        for_each = var.notification_app_env_vars
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
+      env {
+        name  = "AZURE_CLIENT_ID"
+        value = var.notification_client_id
       }
     }
   }

@@ -14,3 +14,19 @@ output "servicebus_namespace_fqdn" {
 output "service_bus_id" {
   value = azurerm_servicebus_namespace.this.id
 }
+
+output "notification_queue_name" {
+  value = azurerm_servicebus_queue.notification.name
+}
+
+output "notification_manual_queue_name" {
+  value = azurerm_servicebus_queue.notification_manual.name
+}
+
+output "app_configuration_id" {
+  value = azurerm_app_configuration.webhook_registry.id
+}
+
+output "app_configuration_endpoint" {
+  value = azurerm_app_configuration.webhook_registry.endpoint
+}

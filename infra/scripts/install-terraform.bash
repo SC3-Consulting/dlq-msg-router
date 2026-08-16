@@ -8,7 +8,7 @@
 #   ./infra/scripts/install-terraform.bash [terraform_version]
 #
 # Defaults:
-#   terraform_version = 1.15.7
+#   terraform_version = 1.15.8
 #
 # Optional environment variables:
 #   INSTALL_DIR  Install destination (default: /usr/local/bin)
@@ -23,7 +23,7 @@ Usage:
 Installs Terraform on Linux using the official HashiCorp release archive.
 
 Defaults:
-  terraform_version = 1.15.7
+  terraform_version = 1.15.8
 
 Optional environment variables:
   INSTALL_DIR  Install destination (default: /usr/local/bin)
@@ -36,7 +36,7 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   exit 1
 fi
 
-TERRAFORM_VERSION="${1:-1.15.7}"
+TERRAFORM_VERSION="${1:-1.15.8}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 TMP_DIR="$(mktemp -d)"
 

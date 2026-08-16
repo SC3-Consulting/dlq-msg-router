@@ -29,6 +29,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy execution logic and default configurations
 COPY src/ ./src/
 COPY data/ ./data/
+COPY simulator/ ./simulator/
 
 EXPOSE 8080
 

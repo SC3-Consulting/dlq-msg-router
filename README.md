@@ -72,10 +72,26 @@ The agent dynamically maps incoming anomalies to specific categories. Based on e
 Once categorised, the agent issues a command pattern mapped to one of five deterministic actions:
 
 *   `drop`: Deletes the message silently (utilised for exact correlation matches).
-*   `drop_and_notify`: Deletes the message and alerts the upstream client (utilised for payload capacity breaches or severe business violations).
+*   `drop_and_notify`: Publishes a durable notification event and then deletes the DLQ message. A separate notification worker delivers the event by client webhook or routes it to manual handling.
 *   `retry`: Re-enqueues the message directly to the main queue (utilised for transient outages like consumer crashes).
 *   `fix_and_retry`: Auto-heals structural payload issues via mapped safe defaults (e.g., injecting '0.0' for missing floats) and re-enqueues.
 *   `escalate`: Routes the payload to the parking-lot-queue for human review (utilised for malformed JSON or AI-suggested rules requiring approval).
+
+### Notification Delivery Lifecycle
+
+`drop_and_notify` does not call an upstream webhook in the DLQ agent. It publishes to
+`notification-queue` first; the source DLQ message is completed only after that publish
+succeeds. The notification worker resolves the client webhook from a registry rather than
+trusting credentials in the message.
+
+HTTP 2xx completes the notification. HTTP 4xx is treated as a permanent failure and is
+moved directly to `notification-manual-queue` with `webhook_attempted`, the HTTP status,
+and a sanitised failure reason. Timeouts and HTTP 5xx remain retryable and eventually use
+the notification queue DLQ. Events without a webhook mapping also go to manual handling.
+
+After the client service or mapping is restored following a HTTP 4xx response, an authorised 
+operator can replay the manual event to `notification-queue`. Replay preserves `event_id`, 
+records the operator, time, and reason, and re-resolves the current webhook configuration.
 
 ## System Pipeline Flow
 
@@ -86,15 +102,24 @@ graph TD
     
     subgraph Azure Container App Environment
     D[DLQ Agent Orchestrator]
+    W[Notification Worker]
     E[(Local SQLite Idempotency Cache)]
     F{Deterministic Rules Engine}
     G{Azure Foundry AI LLM}
+    AC[(Azure App Configuration<br/>webhook-registry)]
+    KV[(Azure Key Vault<br/>client HMAC secrets)]
+    end
+
+    subgraph Azure Service Bus
+    Q[notification-queue]
+    MQ[notification-manual-queue]
+    QDLQ[notification-queue DLQ]
     end
 
     C -->|Peek-Lock Pull| D
     D -->|Gate A: Poison Pill & PII| F
     D -->|Gate B: Correlation Hash| E
-    E -->|If Duplicate| H[Drop Message & Alert]
+    E -->|If Duplicate| H[Drop Message]
     E -->|If Unique| F
     
     F -->|Pattern Match| I[Execute Action]
@@ -104,7 +129,17 @@ graph TD
     I -->|fix_and_retry| J[Apply Schema Fix & Route to Main]
     I -->|retry| K[Route to Main]
     I -->|escalate| L[Route to Parking Lot Queue]
-    I -->|drop_and_notify / drop| H
+    I -->|drop| H
+    I -->|drop_and_notify: publish event| Q
+    Q -->|Publish succeeds; complete source DLQ message| D
+    Q -->|Peek-Lock Pull| W
+    W -->|Resolve client endpoint and secret name| AC
+    W -->|Read HMAC secret| KV
+    W -->|HTTP 2xx| U[Upstream Client Webhook]
+    W -->|No mapping or HTTP 4xx| MQ
+    W -->|Timeout or HTTP 5xx| QDLQ
+    MQ -->|Operator complete_manual| R[Manual Client Notification]
+    MQ -->|Operator replay_automated| Q
     
     D -.->|Stream CSV_EXPORT| M[Azure Log Analytics]
     N[Grafana on Jumpbox Loopback] -->|Query| M
@@ -185,7 +220,7 @@ DLQ-AGENT/
 │       └── grafana/                        # Jumpbox-hosted Grafana stack
 │           ├── dashboards/                 # JSON dashboard definitions (e.g., DLQ telemetry)
 │           ├── provisioning/               # Declarative YAML for datasources and providers
-│           └── scripts/                    # Runtime initialization and variable injection
+│           └── scripts/                    # Runtime initialisation and variable injection
 ├── reports/
 │   └── telemetry_dashboard.csv             # Output generated during local execution
 ├── scripts/                                # Various utility scripts          
@@ -200,6 +235,8 @@ DLQ-AGENT/
 │   ├── local_smoke_test.py                 # Adhoc smoke test of a local deployment
 │   ├── resilience.py                       # Retry support
 │   ├── run_agent.py                        # Orchestrator and thread pool polling
+│   ├── run_notifications.py                # Azure notification/webhook worker
+│   ├── notification.py                     # Registry, signing, delivery, replay
 │   ├── run_with_dependency_checks.py       # Checks dependency health on start
 │   └── state_managers.py                   # Caching logic
 ├── tests/                                  # Pytest suite
@@ -248,3 +285,32 @@ timestamp,source_queue,client_id,message_type,classification,pattern,status,occu
 
 - Detailed IaC execution and bootstrapping: `docs/DEPLOYMENT_RUNBOOK.md`
 - Operations, troubleshooting, and KQL metric extraction: `docs/ops_guide.md`
+
+---
+
+# Quality Tools
+
+Run these commands from the repository virtual environment, or replace `.venv/bin/python`
+with the Python executable used by the environment where the development dependencies are installed.
+
+Format:
+```bash
+# Run isort before Black; .isort.cfg uses Black's import profile so the tools agree.
+.venv/bin/python -m isort scripts simulator src tests
+.venv/bin/python -m black scripts simulator src tests
+```
+
+Lint
+```bash
+.venv/bin/python -m pylint scripts simulator src tests
+```
+
+Type Check:
+```bash
+.venv/bin/python -m mypy scripts simulator src tests
+```
+
+Test Coverage:
+```bash
+.venv/bin/python -m pytest --cov=src --cov=tests --cov-report=term-missing --cov-report=xml
+```

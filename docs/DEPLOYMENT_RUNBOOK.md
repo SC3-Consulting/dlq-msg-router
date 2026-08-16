@@ -22,7 +22,7 @@ export TARGET_LOCATION="australiaeast"
 
 ## Architectural Context & Permission Constraints
 
-To adhere to strict enterprise security mandates, the deployment is orchestrated via either PowerShell wrappers or Bash scripts. This ensures secure injection of CLI credentials without exposing sensitive variables to version control. 
+To adhere to enterprise security standards, the deployment is orchestrated via either PowerShell wrappers or Bash scripts. This ensures secure injection of CLI credentials without exposing sensitive variables to version control. 
 
 **The Resource Group Strategy:** Separating the remote state storage (Storage Account and Key Vault) into a dedicated resource group separate to the other resources is best practice. However, due to tenant-level 'User Access Administrator' restrictions preventing cross-resource-group role assignments in a restricted sandbox development environment, all infrastructure — including the state bootstrap — is encapsulated within a pre-existing resource group (e.g., `rg-dlq-msg-router-<env>`) where 'Owner' permissions are already established. This allows Terraform to autonomously execute the required 'Storage Blob Data Contributor' and 'Key Vault Secrets Officer' role assignments without elevated tenant approvals. In an Enterprise Production deployment, consideration should be made to refactor this implementation using multiple resource groups aligned with support responsibilities and appropriate boundary demarcations.
 
@@ -100,6 +100,8 @@ az keyvault purge --name <kvtfstatexxxxxx> --location australiaeast
 
 **Objective:** Provision the foundational Azure resources required to securely execute Terraform. This creates the Storage Account for the '.tfstate' file and the Key Vault, and handles all SSH key generation securely.
 
+Ensure that `infra/terraform/azure/<environment>/platform.tfvars` values have been updated before running the scripts.
+
 1. Execute the Phase 1 Bash orchestrator from your local repository root:
 
 ```bash
@@ -109,6 +111,8 @@ bash ./infra/scripts/01-bootstrap.sh -e "${TARGET_ENV}" -l "${TARGET_LOCATION}"
 2. **Automated State & Security Initialisation:** The `01-bootstrap.sh` script will autonomously generate the local SSH key pair (if not present), provision the remote state storage, inject the public key into the Key Vault, and generate the `backend.hcl` configuration. 
 
 **Architectural Note (Zero Trust Key Management):** The private SSH key is intentionally *not* stored in the Key Vault. Storing a private key in a centralised vault creates an escalation vulnerability. To maintain least-privilege Zero Trust, the private key remains strictly on the operator's local machine (or ephemeral CI/CD runner), whilst only the public key is distributed to the vault and target infrastructure.
+
+*__TODO:__ The jumpbox should only be used in a non-prod sandbox environment. The risk posed by managing the secret key locally is arguably greater than it being secured in a public endpointed Key Vault. To consider also storing the private key in the key vault at time of creation of the SSH key. Additional compensating controls can be applied to they Key Vault such as restricting access to the keys by IP address.*
 
 *(Note: Terraform initialisation for the main environment is handled automatically by the subsequent wrapper scripts. No manual `terraform init` is required).*
 
@@ -145,6 +149,22 @@ The Jumpbox is a naked Ubuntu instance. Use the local shell to open the Bastion 
 export TARGET_BRANCH="<target-branch>"
 bash ./infra/scripts/03-configure-jumpbox.sh -e "${TARGET_ENV}"
 ```
+
+The default `git` mode requires the current branch to be pushed to the configured
+remote. For sandbox work where the local tree contains uncommitted changes, use the
+alternate `rsync` mode. It opens the same Bastion SSH tunnel, synchronizes the local
+repository to `~/dlq-msg-router`, excludes `.git`, virtual environments, caches,
+reports, databases, `.env`, and local Azure metadata, and then runs the normal remote
+dependency/configuration steps:
+
+```bash
+bash ./infra/scripts/03-configure-jumpbox.sh \
+    -e "${TARGET_ENV}" \
+    --sync-mode rsync
+```
+
+`rsync` mode still requires the local SSH key and Azure CLI Bastion access. It is an
+alternate code-transfer path only; Phase 4 image building and pushing remain unchanged.
 **Trap Resolution: The Silent Jumpbox Script Crash (apt-get lock)**
 If `03-configure-jumpbox.sh` exits silently without printing the "Simulator environment is armed" success message, the newly provisioned Ubuntu VM's background `unattended-upgrades` daemon is likely holding the `apt-get` lock. The script's strict error handling aborts on this failure and leaves a ghost Bastion tunnel process running.
 
@@ -167,12 +187,16 @@ az network bastion ssh \
     --username "azureuser" \
     --ssh-key ~/.ssh/dlq_jumpbox_rsa
 ```
+In `rsync` mode the directory name is derived from the
+local repository directory, normally `~/viva-dlq-smart-router`; in `git` mode it is
+derived from the Git remote name.
 
-Then, from inside the jumpbox session, push the image:
+From inside the jumpbox session, push the image:
 
 ```bash
 export TARGET_ENV="dev"
-cd ~/dlq-msg-router
+export JUMPBOX_REPO_DIR="${HOME}/viva-dlq-smart-router"
+cd "${JUMPBOX_REPO_DIR}"
 bash ./infra/scripts/04-push-image.bash -e "${TARGET_ENV}"
 ```
 RBAC Propagation Note: New or recently changed role assignments can take a short time to become effective. If `04-push-image.bash` fails during Terraform backend initialisation with a `403 AuthorizationPermissionMismatch`, wait 1-2 minutes and retry the command.
@@ -183,6 +207,7 @@ Once the image push completes, keep the Bastion session available for Phase 05 v
 Use a third local terminal to open a Bastion-backed SSH tunnel, securely forwarding the isolated Grafana container to your local browser on `localhost:3000`.
 
 ```bash
+export TARGET_ENV="dev"
 az network bastion ssh \
     --name "bas-${TARGET_ENV}" \
     --resource-group "rg-dlq-msg-router-${TARGET_ENV}" \
@@ -208,6 +233,138 @@ When mapping User-Assigned Managed Identities into Container Apps, the Python 'D
 Terraform deploys the image tag declared in `infra/terraform/azure/environments/<env>/platform.tfvars` (`container_image_tag`).
 
 To roll out a new image revision, the pipeline must first build and push the updated image to the Azure Container Registry. Simply updating the variable in Terraform will not trigger a Docker build. Once the image is successfully pushed via the Phase 3 bash scripts, executing the Phase 4 deployment script will force Terraform to detect the tag change and deploy the new revision to the Container App.
+
+### Notification Infrastructure
+
+The Azure deployment creates:
+
+- `notification-queue` for durable alert events.
+- `notification-manual-queue` for missing mappings and permanent webhook failures.
+- An App Configuration store for the labeled `webhook-registry` key. The key is created when non-empty registry metadata is configured.
+- A private runtime Key Vault for client HMAC secrets.
+- A separate `ca-dlq-notifications-<env>` Container App running `python -m src.run_notifications`.
+- A diagnostic setting that routes Container Apps console and system logs to Log Analytics.
+
+Terraform also grants the identity running the deployment `App Configuration Data Owner`
+on the new configuration store. This is required because App Configuration keys use the
+data plane, even though the store itself is created through the management plane. The
+deployer must therefore be allowed to create role assignments; if the apply reports a
+role-assignment permission error, grant the deployment principal `User Access Administrator`
+(or an equivalent custom role) at the resource-group scope before retrying.
+
+The same jumpbox identity receives `App Configuration Contributor`. AzureRM uses the
+management-plane `configurationStores/listKeys/action` operation while reading the store,
+even when the intended registry operation is a data-plane key update.
+
+The jumpbox identity also receives `App Configuration Data Owner` so the Terraform
+provider running inside the private network can create/read the data-plane registry key.
+Apply `module.identity` first and allow RBAC propagation before applying the key target.
+
+Set `app_configuration_deployer_object_id` to the original Terraform deployment user's
+stable Entra object ID. Do not allow this value to change to the jumpbox managed identity
+when running Terraform remotely: Terraform would attempt to delete the original role
+assignment, which the jumpbox identity is not authorized to do.
+
+When `webhook_registry = {}` (the default), Terraform deliberately creates no data-plane
+key. This allows the core deployment to complete while RBAC propagates. After the role
+assignment is effective, add client metadata and run Terraform again to create or update
+the labeled key.
+
+The notification identity can read App Configuration, read secrets from the runtime
+Key Vault, receive notification events, send manual events, and pull the worker image.
+It does not need to manage source DLQs.
+
+The jumpbox uses the agent runtime managed identity and is granted `Key Vault Secrets
+Officer` on the dedicated runtime vault so operators can provision client HMAC secrets
+from inside the private network. The notification worker retains only `Key Vault Secrets
+User` access and cannot write or rotate secrets. The local Terraform/Azure CLI principal
+does not have private-network access to this vault.
+
+After Terraform deployment, provision each client secret out of band:
+
+```bash
+VAULT_NAME="$(terraform -chdir=infra/terraform/azure output -raw webhook_secrets_key_vault_name)"
+az keyvault secret set --vault-name "${VAULT_NAME}" \
+        --name client-a-hmac --value '<generated-random-secret>'
+```
+
+Because the runtime vault is private-only, run the `az keyvault secret set` command from
+the configured jumpbox session after signing Azure CLI into its managed identity:
+
+```bash
+az login --identity
+VAULT_NAME="$(terraform -chdir=infra/terraform/azure output -raw webhook_secrets_key_vault_name)"
+read -rsp "Client_A webhook HMAC secret: " CLIENT_A_SECRET
+echo
+az keyvault secret set --vault-name "${VAULT_NAME}" \
+    --name client-a-hmac --value "${CLIENT_A_SECRET}"
+unset CLIENT_A_SECRET
+```
+
+Then add the non-secret client entry to the selected environment's `webhook_registry` in the `infra/terraform/azure/environments/<environment>>/platform.tfvars` file:
+
+```hcl
+webhook_registry = {
+    Client_A = {
+        endpoint    = "https://client.example/notifications"
+        secret_name = "client-a-hmac"
+        enabled     = true
+        version     = "v1"
+    }
+}
+```
+
+Run the App Configuration key update from the jumpbox after Phase 3 has configured its VNet
+access and managed identity. The store is private-only: a local Terraform process can manage
+the resource, but cannot reach the private data-plane endpoint to create or read the key.
+
+From the jumpbox repository. In `rsync` mode the directory name is derived from the
+local repository directory, normally `~/viva-dlq-smart-router`; in `git` mode it is
+derived from the Git remote name. Set `JUMPBOX_REPO_DIR` to the actual synchronized
+directory before running the commands below:
+
+```bash
+export JUMPBOX_REPO_DIR="${HOME}/viva-dlq-smart-router"
+cd "${JUMPBOX_REPO_DIR}"
+source .venv/bin/activate
+az login --identity
+export ARM_USE_MSI=true
+export ARM_CLIENT_ID="$(grep '^AZURE_CLIENT_ID=' .azure/jumpbox-auth.env | cut -d'=' -f2 | tr -d '"')"
+export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+export ARM_TENANT_ID="$(az account show --query tenantId -o tsv)"
+
+terraform -chdir=infra/terraform/azure init -reconfigure \
+    -backend-config="environments/${TARGET_ENV}/backend.hcl"
+terraform -chdir=infra/terraform/azure apply -auto-approve \
+    -target=module.identity \
+    -var-file="environments/${TARGET_ENV}/platform.tfvars" \
+    -var-file="environments/${TARGET_ENV}/bootstrap.generated.tfvars" \
+    -var="environment=${TARGET_ENV}"
+# Allow the new App Configuration roles time to propagate before the key apply.
+terraform -chdir=infra/terraform/azure apply -auto-approve \
+    -target='module.data_services.azurerm_app_configuration_key.webhook_registry["registry"]' \
+    -var-file="environments/${TARGET_ENV}/platform.tfvars" \
+    -var-file="environments/${TARGET_ENV}/bootstrap.generated.tfvars" \
+        -var="environment=${TARGET_ENV}"
+```
+
+If `platform.tfvars` was changed locally after Phase 2, rerun Phase 3 with rsync before
+this jumpbox apply so the non-empty `webhook_registry` entry is transferred:
+
+```bash
+bash ./infra/scripts/03-configure-jumpbox.sh \
+    -e "${TARGET_ENV}" \
+    --sync-mode rsync
+```
+
+The rsync path deliberately excludes `.env` and `.azure/`, but includes
+`infra/terraform/azure/environments/*/platform.tfvars` and the other Terraform source
+files. It verifies that the target environment's `platform.tfvars` exists remotely before
+continuing.
+
+The worker resolves the current mapping and secret at delivery time. The registry provider
+is isolated so a future blob or database-backed implementation can replace App Configuration
+without changing the worker lifecycle or event contract.
 
 ### 3. Execute Deployment
 Return to **Terminal 1 (Local Control Plane - Return)** and deploy the agent once the image push has completed in Terminal 2.

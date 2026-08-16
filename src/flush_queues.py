@@ -2,7 +2,7 @@
 This module provides a utility to flush all messages from specified Azure Service Bus queues and their Dead Letter Queues (DLQs).
 - It connects to the Service Bus using either a connection string or Managed Identity credentials.
 - The queues to flush are specified via the ASB_SOURCES environment variable, which should be a JSON array of objects with "type" and "name" fields.
-- Optionally, a parking lot queue can be specified via the PARKING_LOT_QUEUE_NAME environment variable.
+- Optionally, parking-lot and notification queues can be configured through their environment variables.
 - The utility logs the number of messages flushed from each queue and DLQ, and confirms when all queues are empty and ready for testing.
 - This is useful for integration testing scenarios where a clean state is required before running tests.
 """
@@ -91,15 +91,21 @@ def flush_queue(client, queue_name, is_dlq=False):
 def main():
     """Main function to flush all specified queues and their DLQs."""
     fully_qualified_namespace = _resolve_service_bus_namespace()
+    conn_str = os.getenv("SERVICE_BUS_CONNECTION_STRING", "").strip()
     sources_json = os.getenv(
         "ASB_SOURCES",
         '[{"type": "queue","name": "payments-queue"},{"type": "queue","name": "integration-queue"}]',
     )
-    parking_lot_name = os.getenv("PARKING_LOT_QUEUE_NAME")
+    operational_queue_names = [
+        os.getenv("PARKING_LOT_QUEUE_NAME", "parking-lot-queue"),
+        os.getenv("NOTIFICATION_QUEUE_NAME", "notification-queue"),
+        os.getenv("NOTIFICATION_MANUAL_QUEUE_NAME", "notification-manual-queue"),
+    ]
 
-    if not fully_qualified_namespace:
+    if not fully_qualified_namespace and not conn_str:
         logger.error(
-            "Missing SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE in environment settings"
+            "Missing Service Bus configuration: set SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE "
+            "or SERVICE_BUS_CONNECTION_STRING"
         )
         return
 
@@ -109,8 +115,6 @@ def main():
         logger.error("ASB_SOURCES must be a valid JSON array.")
         return
 
-    conn_str = os.getenv("SERVICE_BUS_CONNECTION_STRING")
-
     if conn_str:
         client = ServiceBusClient.from_connection_string(conn_str)
     else:
@@ -118,18 +122,26 @@ def main():
         client = ServiceBusClient(fully_qualified_namespace, credential)
 
     with client:
-        # 1. Flush all configured tenant queues (Main + DLQ)
+        queue_names = []
+        seen_queue_names = set()
+
+        # Flush configured tenant queues and internal operational queues once each.
         for source in target_sources:
             if source.get("type") == "queue":
                 queue_name = source.get("name")
-                logger.info(f"--- Sweeping {queue_name} ---")
-                flush_queue(client, queue_name, is_dlq=False)
-                flush_queue(client, queue_name, is_dlq=True)
+                if queue_name and queue_name not in seen_queue_names:
+                    seen_queue_names.add(queue_name)
+                    queue_names.append(queue_name)
 
-        # 2. Flush the Parking Lot
-        if parking_lot_name:
-            logger.info("--- Sweeping Parking Lot ---")
-            flush_queue(client, parking_lot_name, is_dlq=False)
+        for queue_name in operational_queue_names:
+            if queue_name and queue_name not in seen_queue_names:
+                seen_queue_names.add(queue_name)
+                queue_names.append(queue_name)
+
+        for queue_name in queue_names:
+            logger.info(f"--- Sweeping {queue_name} ---")
+            flush_queue(client, queue_name, is_dlq=False)
+            flush_queue(client, queue_name, is_dlq=True)
 
     logger.info("All queues are perfectly clean. Ready for testing!")
 

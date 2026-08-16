@@ -13,9 +13,6 @@ The system is designed to prioritise deterministic rules and human oversight,
 with the AI engine serving as an auxiliary tool to assist in complex or ambiguous cases.
 """
 
-from dotenv import load_dotenv
-
-load_dotenv()
 import json
 import logging
 import os
@@ -50,12 +47,6 @@ class PIIScrubber:
     """
 
     # TODO: Once schema is known, consider enhancing PII detection using structured payload context.
-
-    # TODO: The load_dotenv() call at the top of this module is intended to load environment variables from a .env file for local development and testing.
-    # However, as import order can change configuration state, it makes testing and start up behaviour harder to reason about.
-    # Consider moving the load_dotenv() call to the main entry point of the application or to a dedicated configuration module,
-    # and ensure that environment variables are loaded before any dependent modules are imported.
-    # This will improve clarity and maintainability of the codebase, especially in multi-module applications where configuration state is critical.
 
     def __init__(self) -> None:
         """
@@ -213,7 +204,7 @@ class BaseAIEngine(ABC):
 
         actions = {
             "drop": "Delete the message from the DLQ silently. Used for expired TTL or noise.",
-            "drop_and_notify": "Delete the message and alert the upstream client of duplicate or terminal failure.",
+            "drop_and_notify": "Publish a durable notification event, then delete the message. A separate worker delivers it by webhook or routes it to manual handling.",
             "retry": "Re-enqueue the original message to the main queue (used for transient outages).",
             "fix_and_retry": "Safely inject a missing field or correct a data type, then re-enqueue.",
             "escalate": "Route to the parking lot queue for human review and create a ticket.",
@@ -278,13 +269,11 @@ JSON FORMAT:
         cleaned = raw_text.strip()
         fence_match = re.search(r"(?:```(?:json)?\s*)(.+?)\s*```", cleaned, re.DOTALL)
 
-        # TODO: Does a fence match and then doesn't use it. Should we use the fenced content if found?
-        # Falls back to first and last braces if no fence is found. This may not be robust if the LLM output contains multiple JSON objects or nested structures.
-        # Consider enhancing the JSON salvage logic to handle multiple JSON objects, nested structures, or malformed outputs more gracefully,
-        # potentially using a streaming parser or more sophisticated heuristics to extract valid JSON segments.
-
         if not cleaned:
             raise ValueError("Empty LLM response after unwrapping.")
+
+        if fence_match:
+            cleaned = fence_match.group(1).strip()
 
         try:
             parsed = json.loads(cleaned)
@@ -407,13 +396,14 @@ class AzureFoundryEngine(BaseAIEngine):
             ValueError: If required environment variables for Azure Foundry configuration are missing or invalid.
         """
         super().__init__()
-        self.endpoint = os.getenv("AZURE_FOUNDRY_ENDPOINT")
+        endpoint = os.getenv("AZURE_FOUNDRY_ENDPOINT")
         self.deployment_name = os.getenv("AZURE_FOUNDRY_DEPLOYMENT_NAME")
 
-        if not self.endpoint or not self.deployment_name:
+        if not endpoint or not self.deployment_name:
             raise ValueError(
                 "Missing Azure Foundry configuration in environment settings"
             )
+        self.endpoint = endpoint
 
         # The inference SDK expects a deployment-scoped endpoint for Azure OpenAI-style
         # Cognitive resources. Accept either a base account endpoint or deployment URL.

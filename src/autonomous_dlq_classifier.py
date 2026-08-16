@@ -55,6 +55,14 @@ class AutonomousDLQClassifier:
         _load_rules(filepath): Loads and compiles deterministic routing logic from an external JSON configuration file.
     """
 
+    _VALID_AI_ACTIONS = {
+        "drop",
+        "drop_and_notify",
+        "retry",
+        "fix_and_retry",
+        "escalate",
+    }
+
     def __init__(
         self,
         idempotency_cache,
@@ -65,6 +73,7 @@ class AutonomousDLQClassifier:
         main_queue_sender,
         dlq_receiver,
         source_queue_name,
+        notification_sender=None,
     ):
         """
         Initialises the AutonomousDLQClassifier with the provided components and configuration.
@@ -91,6 +100,8 @@ class AutonomousDLQClassifier:
             receiver=dlq_receiver,
             sender=main_queue_sender,
             parking_lot_sender=parking_lot_sender,
+            notification_sender=notification_sender,
+            source_queue=source_queue_name,
         )
 
         # Parameterise cache TTLs and Thresholds from environment variables
@@ -255,7 +266,14 @@ class AutonomousDLQClassifier:
 
         # --- GATE B: IDEMPOTENCY CHECK ---
         payload_hash = hashlib.sha256(self.current_raw_payload_bytes).hexdigest()
-        idemp_string = f"{client_id}_{message_type}_{correlation_anchor}_{payload_hash}"
+        client_idempotency_key = self._first_header(
+            headers, ["idempotency_key", "Idempotency-Key", "x-idempotency-key"]
+        )
+        idemp_anchor = client_idempotency_key or correlation_anchor
+        idemp_string = (
+            f"{self.source_queue_name}_{client_id}_{message_type}_"
+            f"{idemp_anchor}_{payload_hash}"
+        )
         idempotency_hash = hashlib.sha256(idemp_string.encode()).hexdigest()
 
         duplicate_count = self.idempotency_cache.increment(
@@ -284,7 +302,9 @@ class AutonomousDLQClassifier:
             return
 
         # --- GATE C: CLASSIFICATION CACHE ---
-        error_shape_string = f"{client_id}_{dlq_reason}_{dlq_desc}"
+        error_shape_string = (
+            f"{self.source_queue_name}_{client_id}_{dlq_reason}_{dlq_desc}"
+        )
         classification_hash = hashlib.sha256(error_shape_string.encode()).hexdigest()
 
         if self.classification_cache.exists(classification_hash):
@@ -324,9 +344,6 @@ class AutonomousDLQClassifier:
                 else "AI_Low_Confidence_Manual_Review"
             )
 
-            # TODO: Add a structured schema validation step to prevent malformed AI responses from being logged or acted upon.
-            # This could include checking for required fields, data types, and value ranges before constructing the telemetry contract or executing actions.
-            # In particular, check that suggested_classification, suggested_action, detection_rule, and suggested_pattern are present and valid and confidence_score is within a reasonable range before proceeding.
             contract = self._build_contract(
                 client_id=client_id,
                 message_type=message_type,
@@ -339,6 +356,7 @@ class AutonomousDLQClassifier:
                 suggested_action=ai_result.get("suggested_action"),
                 detection_rule=ai_result.get("detection_rule"),
                 confidence_score=confidence,
+                unmatched_reason=dlq_reason,
                 correlation_context=correlation_context,
             )
 
@@ -397,7 +415,7 @@ class AutonomousDLQClassifier:
         # Suggested fields: schema_version, owner, priority (renaming severity_score if that is its intent), enabled flag, last_updated timestamp, scope, and rule_type
         # Only add new fields if they are actually used in the rule evaluation logic or for governance purposes, to avoid unnecessary complexity.
 
-        # TODO: Rule application is narrow and string-exact. Should track unmatched dead-letter reasons and add rules incrementally once in production.
+        # Rule application is narrow and string-exact; unmatched reasons are recorded in AI telemetry.
         # Rules should cover 80%+ of historical dead-letter reasons to reduce load on the AI engine and improve deterministic routing.
         # The rules only cover a few broker reasons such as TTL expiry, delivery limit, validation failed, malformed message, and circuit breaker in rules.json.
         # Anything outside of these reasons will be classified as "Unclassified_Anomaly" and routed to the AI engine, increasing the load on the AI and potentially delaying resolution.
@@ -409,7 +427,7 @@ class AutonomousDLQClassifier:
         # Operational scenarios: rule execution failure or malformed rule condition, rule match ambiguity or conflict, rule match with no suggested action or safe defaults,
         # rule match with unsafe defaults that could cause downstream failures, cache/store unavailability during dedupe check (fail-open vs fail-safe policy),
         # cache/store corruption or data loss, cache/store TTL expiry before processing completes, cache/store race conditions or concurrency issues,
-        # cache/store size limits exceeded, cache/store eviction of active entries, cache/store serialization/deserialization errors, cache/store network partitioning or latency spikes,
+        # cache/store size limits exceeded, cache/store eviction of active entries, cache/store serialisation/deserialisation errors, cache/store network partitioning or latency spikes,
         # Busines scenarios: account sync missing customer identifier, payment request missing required fields such as amount or currency, negative or zero payment amount,
         # invalid currency code, unsupported payment method, expired or invalid authentication token, missing or malformed signature, duplicate transaction detected, unknown product code,
         # event schema version unsupported, event timestamp too far in the future or too old, event source unrecognised, idempotency key missing for operations requiring exactly-once semantics,
@@ -498,6 +516,8 @@ class AutonomousDLQClassifier:
         for attempt in range(ai_max_attempts):
             try:
                 ai_dict = self.ai.call_llm(client_id, reason, description, payload)
+                if not self._is_valid_ai_result(ai_dict):
+                    raise ValueError("AI response failed structured validation")
                 circuit.record_success()
                 return ai_dict
             except Exception as e:
@@ -523,6 +543,34 @@ class AutonomousDLQClassifier:
             "suggested_pattern": "manual_review_required",
         }
 
+    def _is_valid_ai_result(self, result) -> bool:
+        """Validate AI output before it is logged or used for routing decisions.
+
+        Args:
+            result (dict): The AI output to validate.
+        Returns:
+            bool: True if the AI output is valid, False otherwise.
+        """
+        if not isinstance(result, dict):
+            return False
+
+        for field in (
+            "suggested_classification",
+            "suggested_pattern",
+            "suggested_action",
+        ):
+            if not isinstance(result.get(field), str) or not result[field].strip():
+                return False
+
+        if result["suggested_action"] not in self._VALID_AI_ACTIONS:
+            return False
+
+        try:
+            confidence = float(result.get("confidence_score", 0.0))
+        except (TypeError, ValueError):
+            return False
+        return 0.0 <= confidence <= 1.0
+
     def _build_contract(
         self,
         client_id,
@@ -534,6 +582,7 @@ class AutonomousDLQClassifier:
         suggested_action=None,
         detection_rule=None,
         confidence_score=None,
+        unmatched_reason=None,
         occurrence_count=1,
         correlation_context=None,
     ):
@@ -587,6 +636,8 @@ class AutonomousDLQClassifier:
             contract["detection_rule"] = detection_rule
         if confidence_score is not None:
             contract["confidence_score"] = confidence_score
+        if unmatched_reason:
+            contract["unmatched_reason"] = unmatched_reason
 
         return contract
 
