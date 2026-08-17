@@ -60,9 +60,8 @@ resource "azurerm_linux_virtual_machine" "jumpbox" {
   source_image_reference {
     publisher = "Canonical"
     offer     = "0001-com-ubuntu-server-jammy"
-    sku       = "22_04-lts"
+    sku       = "22_04-lts-gen2"
     version   = "latest"
-
   }
 
   # Attach the agent runtime user-assigned MI so DefaultAzureCredential
@@ -73,4 +72,65 @@ resource "azurerm_linux_virtual_machine" "jumpbox" {
   }
 
   tags = var.tags
+}
+
+resource "azurerm_monitor_data_collection_rule" "jumpbox_vm_insights" {
+  name                = "dcr-jumpbox-vminsights-${var.suffix}"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+
+  data_sources {
+    performance_counter {
+      name                          = "perfCounterDataSource"
+      sampling_frequency_in_seconds = 60
+      streams                      = ["Microsoft-InsightsMetrics"]
+      counter_specifiers = [
+        "\\Processor Information(_Total)\\% Processor Time",
+        "\\Processor Information(_Total)\\% Privileged Time",
+        "\\Memory\\Available MBytes",
+        "\\LogicalDisk(_Total)\\% Free Space",
+        "\\PhysicalDisk(_Total)\\Disk Transfers/sec",
+        "\\Network Interface(*)\\Bytes Total/sec"
+      ]
+    }
+
+    extension {
+      name     = "DependencyAgentDataSource"
+      extension_name = "DependencyAgentLinux"
+      streams = ["Microsoft-InsightsMetrics"]
+    }
+  }
+
+  destinations {
+    log_analytics {
+      name                  = "logAnalyticsDestination"
+      workspace_resource_id = var.log_analytics_workspace_id
+    }
+  }
+
+  data_flow {
+    streams      = ["Microsoft-InsightsMetrics"]
+    destinations = ["logAnalyticsDestination"]
+  }
+}
+
+resource "azurerm_monitor_data_collection_rule_association" "jumpbox_vm_insights" {
+  name                    = "assoc-jumpbox-vminsights-${var.suffix}"
+  target_resource_id      = azurerm_linux_virtual_machine.jumpbox.id
+  data_collection_rule_id = azurerm_monitor_data_collection_rule.jumpbox_vm_insights.id
+}
+
+resource "azurerm_virtual_machine_extension" "jumpbox_azure_monitor_agent" {
+  name                       = "AzureMonitorLinuxAgent"
+  virtual_machine_id         = azurerm_linux_virtual_machine.jumpbox.id
+  publisher                  = "Microsoft.Azure.Monitor"
+  type                      = "AzureMonitorLinuxAgent"
+  type_handler_version      = "1.33"
+  auto_upgrade_minor_version = true
+
+  settings = jsonencode({
+    enableAgent = true
+  })
+
+  depends_on = [azurerm_monitor_data_collection_rule_association.jumpbox_vm_insights]
 }

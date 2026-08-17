@@ -111,6 +111,7 @@ module "foundry" {
 
 module "private_endpoints" {
   source                     = "./modules/private_endpoints"
+  depends_on                 = [module.foundry]
   resource_group_name        = module.foundation.resource_group_name
   location                   = var.location
   private_endpoint_subnet_id = module.network.private_endpoint_subnet_id
@@ -146,7 +147,7 @@ data "azurerm_storage_account" "state_backend" {
 
 module "bastion_jumpbox" {
   source                       = "./modules/bastion_jumpbox"
-  depends_on                   = [module.network]
+  depends_on                   = [module.network, module.observability]
   resource_group_name          = module.foundation.resource_group_name
   location                     = var.location
   jumpbox_subnet_id            = module.network.jumpbox_subnet_id
@@ -154,6 +155,7 @@ module "bastion_jumpbox" {
   suffix                       = var.environment
   jumpbox_admin_ssh_public_key = local.use_key_vault_jumpbox_key ? data.azurerm_key_vault_secret.jumpbox_admin_ssh_public_key[0].value : var.jumpbox_admin_ssh_public_key
   jumpbox_vm_size              = var.jumpbox_vm_size
+  log_analytics_workspace_id   = module.observability.log_analytics_workspace_id
   agent_runtime_identity_id    = module.identity.agent_runtime_identity_id
 }
 
@@ -193,7 +195,8 @@ module "agent_hosting" {
     }
   )
   app_secret_env_var_secret_ids    = local.app_secret_env_var_secret_ids
-  container_image_tag              = var.container_image_tag
+  router_container_image_tag       = var.router_container_image_tag
+  notification_container_image_tag = var.notification_container_image_tag
   container_cpu                    = var.agent_container_cpu
   container_memory                 = var.agent_container_memory
   min_replicas                     = var.agent_min_replicas

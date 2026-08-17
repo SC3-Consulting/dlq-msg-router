@@ -7,6 +7,10 @@ variable "jumpbox_admin_ssh_public_key" { type = string }
 variable "jumpbox_vm_size" {
   type = string
 }
+variable "log_analytics_workspace_id" {
+  type        = string
+  description = "Resource ID of the Log Analytics workspace to receive VM Insights data."
+}
 variable "agent_runtime_identity_id" {
   type        = string
   description = "Resource ID of the user-assigned managed identity to attach to the jumpbox."

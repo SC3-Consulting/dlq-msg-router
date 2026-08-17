@@ -54,10 +54,11 @@ fi
 
 readonly AZURE_CLIENT_ID="${AZURE_CLIENT_ID:-}"
 
-# Dynamically extract the image tag from platform.tfvars
-readonly CONTAINER_IMAGE_TAG=$(grep -E '^[[:space:]]*container_image_tag' "${PLATFORM_VARS_FILE}" | awk -F'=' '{gsub(/ /,"",$2); gsub(/"/,"",$2); print $2}')
-if [[ -z "${CONTAINER_IMAGE_TAG:-}" ]]; then
-  echo "Error: Could not parse container_image_tag from ${PLATFORM_VARS_FILE}" >&2
+# Dynamically extract the immutable image tags from platform.tfvars.
+readonly ROUTER_CONTAINER_IMAGE_TAG=$(grep -E '^[[:space:]]*router_container_image_tag' "${PLATFORM_VARS_FILE}" | awk -F'=' '{gsub(/ /,"",$2); gsub(/"/,"",$2); print $2}')
+readonly NOTIFICATION_CONTAINER_IMAGE_TAG=$(grep -E '^[[:space:]]*notification_container_image_tag' "${PLATFORM_VARS_FILE}" | awk -F'=' '{gsub(/ /,"",$2); gsub(/"/,"",$2); print $2}')
+if [[ -z "${ROUTER_CONTAINER_IMAGE_TAG:-}" || -z "${NOTIFICATION_CONTAINER_IMAGE_TAG:-}" ]]; then
+  echo "Error: Could not parse router_container_image_tag and notification_container_image_tag from ${PLATFORM_VARS_FILE}" >&2
   exit 1
 fi
 
@@ -98,7 +99,11 @@ fi
 
 echo "==> Building and pushing image..."
 cd "${ROOT_DIR}"
-docker build -t "${ACR_LOGIN_SERVER}/router-agent:${CONTAINER_IMAGE_TAG}" .
-docker push "${ACR_LOGIN_SERVER}/router-agent:${CONTAINER_IMAGE_TAG}"
+docker build \
+  -t "${ACR_LOGIN_SERVER}/router-agent:${ROUTER_CONTAINER_IMAGE_TAG}" \
+  -t "${ACR_LOGIN_SERVER}/router-agent:${NOTIFICATION_CONTAINER_IMAGE_TAG}" \
+  .
+docker push "${ACR_LOGIN_SERVER}/router-agent:${ROUTER_CONTAINER_IMAGE_TAG}"
+docker push "${ACR_LOGIN_SERVER}/router-agent:${NOTIFICATION_CONTAINER_IMAGE_TAG}"
 
 echo "==> Image push complete."

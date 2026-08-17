@@ -115,9 +115,14 @@ variable "app_configuration_deployer_object_id" {
   default     = ""
 }
 
-variable "container_image_tag" {
+variable "router_container_image_tag" {
   type        = string
-  description = "Immutable image tag for the router-agent container deployment."
+  description = "Immutable image tag for the router agent container deployment."
+}
+
+variable "notification_container_image_tag" {
+  type        = string
+  description = "Immutable image tag for the notification worker container deployment."
 }
 
 variable "agent_container_cpu" {

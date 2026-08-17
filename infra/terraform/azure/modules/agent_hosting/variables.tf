@@ -5,7 +5,8 @@ variable "delegated_agent_subnet_id" { type = string }
 variable "log_analytics_workspace_id" { type = string }
 variable "acr_login_server" { type = string }
 variable "agent_runtime_identity_id" { type = string }
-variable "container_image_tag" { type = string }
+variable "router_container_image_tag" { type = string }
+variable "notification_container_image_tag" { type = string }
 
 variable "container_cpu" {
   description = "Container CPU cores for the DLQ agent container app."

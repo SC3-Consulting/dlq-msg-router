@@ -34,6 +34,31 @@ resource "azurerm_network_security_group" "azure_bastion" {
   tags                = var.tags
 }
 
+resource "azurerm_public_ip" "jumpbox_nat" {
+  name                = "pip-jumpbox-nat-${replace(var.resource_group_name, "-", "")}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  zones               = ["1"]
+  tags                = var.tags
+}
+
+resource "azurerm_nat_gateway" "jumpbox" {
+  name                    = "nat-jumpbox-${replace(var.resource_group_name, "-", "")}"
+  location                = var.location
+  resource_group_name     = var.resource_group_name
+  sku_name                = "Standard"
+  idle_timeout_in_minutes = 10
+  zones                   = ["1"]
+  tags                    = var.tags
+}
+
+resource "azurerm_nat_gateway_public_ip_association" "jumpbox" {
+  nat_gateway_id       = azurerm_nat_gateway.jumpbox.id
+  public_ip_address_id = azurerm_public_ip.jumpbox_nat.id
+}
+
 resource "azurerm_network_security_rule" "bastion_inbound_https" {
   name                        = "AllowHttpsInbound"
   priority                    = 120
@@ -302,11 +327,17 @@ resource "azurerm_subnet" "jumpbox" {
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = [var.jumpbox_subnet_cidr]
+  default_outbound_access_enabled = false
 }
 
 resource "azurerm_subnet_network_security_group_association" "jumpbox" {
   subnet_id                 = azurerm_subnet.jumpbox.id
   network_security_group_id = azurerm_network_security_group.jumpbox.id
+}
+
+resource "azurerm_subnet_nat_gateway_association" "jumpbox" {
+  subnet_id      = azurerm_subnet.jumpbox.id
+  nat_gateway_id = azurerm_nat_gateway.jumpbox.id
 }
 
 resource "azurerm_subnet" "azure_bastion" {

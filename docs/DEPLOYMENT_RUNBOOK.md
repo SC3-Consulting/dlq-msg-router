@@ -100,6 +100,23 @@ az keyvault purge --name <kvtfstatexxxxxx> --location australiaeast
 
 **Objective:** Provision the foundational Azure resources required to securely execute Terraform. This creates the Storage Account for the '.tfstate' file and the Key Vault, and handles all SSH key generation securely.
 
+If you are creating a new environment, start with the checked-in template:
+
+```bash
+cp infra/terraform/azure/platform.tfvars.example \
+    "infra/terraform/azure/environments/${TARGET_ENV}/platform.tfvars"
+```
+
+Update the copied file for the target environment before deployment. At minimum, set
+`environment`, `location`, `resource_group_name`, the subnet CIDRs,
+`router_container_image_tag`, `notification_container_image_tag`,
+the Azure Foundry endpoint and model values, and any webhook or Key Vault secret mappings.
+The `app_configuration_deployer_object_id` value is optional; leave it empty to use the
+current Azure CLI principal, or set it to the stable Entra object ID used for deployment.
+Do not put secret values in `platform.tfvars`; reference Key Vault secret names through
+`app_secret_env_var_secret_names` instead. The bootstrap script generates
+`bootstrap.generated.tfvars` separately.
+
 Ensure that `infra/terraform/azure/<environment>/platform.tfvars` values have been updated before running the scripts.
 
 1. Execute the Phase 1 Bash orchestrator from your local repository root:
@@ -165,6 +182,7 @@ bash ./infra/scripts/03-configure-jumpbox.sh \
 
 `rsync` mode still requires the local SSH key and Azure CLI Bastion access. It is an
 alternate code-transfer path only; Phase 4 image building and pushing remain unchanged.
+
 **Trap Resolution: The Silent Jumpbox Script Crash (apt-get lock)**
 If `03-configure-jumpbox.sh` exits silently without printing the "Simulator environment is armed" success message, the newly provisioned Ubuntu VM's background `unattended-upgrades` daemon is likely holding the `apt-get` lock. The script's strict error handling aborts on this failure and leaves a ghost Bastion tunnel process running.
 
@@ -230,9 +248,9 @@ When mapping User-Assigned Managed Identities into Container Apps, the Python 'D
 *(Architectural Note: User-Assigned identity is deliberately utilised over System-Assigned to decouple RBAC assignments from the container lifecycle. This allows Terraform to establish secure permissions before the container is provisioned, preventing Infrastructure-as-Code race conditions).*
 
 ### 2. Trap Resolution: Immutable Tag Rollout
-Terraform deploys the image tag declared in `infra/terraform/azure/environments/<env>/platform.tfvars` (`container_image_tag`).
+Terraform deploys the immutable image tags declared in `infra/terraform/azure/environments/<env>/platform.tfvars` (`router_container_image_tag` and `notification_container_image_tag`).
 
-To roll out a new image revision, the pipeline must first build and push the updated image to the Azure Container Registry. Simply updating the variable in Terraform will not trigger a Docker build. Once the image is successfully pushed via the Phase 3 bash scripts, executing the Phase 4 deployment script will force Terraform to detect the tag change and deploy the new revision to the Container App.
+To roll out new image revisions, the pipeline must first build and push both immutable tags to the Azure Container Registry. Simply updating either variable in Terraform will not trigger a Docker build. Once both tags are successfully pushed via the Phase 3 bash scripts, executing the Phase 4 deployment script will force Terraform to detect the tag changes and deploy the corresponding revisions to the Container Apps.
 
 ### Notification Infrastructure
 
@@ -379,12 +397,14 @@ bash ./infra/scripts/05-deploy-agent.sh -e "${TARGET_ENV}"
 
 **Objective:** Validate the deployed agent, Grafana dashboard, and simulator flow after Phase 05 completes.
 
+**Azure-native dashboard note:** the environment now includes a minimal Azure Monitor workbook during Terraform deployment. This workbook is the supported Azure-native operational dashboard for this stack. The local Docker-based Grafana remains a sandbox convenience for quick local inspection and iterative dashboard development, but it is not the primary production dashboard path. For more advanced visuals, the preferred future enhancement is to evolve this into a richer Azure Monitor workbook or a managed Grafana deployment, rather than depending on the jumpbox-hosted container.
+
 **Trap Resolution (Module Execution):** Running Python scripts directly via path triggers a 'ModuleNotFoundError' due to execution isolation. They must be executed as modules from the repository root.
 
 1. Return to **Terminal 2 (Jumpbox Execution Plane)**. Ensure you are in the cloned repository and activate the virtual environment:
 
 ```bash
-cd ~/dlq-msg-router
+cd ~/dlq-msg-router #~/viva-dlq-smart-router
 source .venv/bin/activate
 ```
 
@@ -444,6 +464,33 @@ ContainerAppConsoleLogs_CL
 For additional LAW KQL queries, see [OPERATOR_DASHBOARD_QUERIES](OPERATOR_DASHBOARD_QUERIES.md)
 
 ### 2. Infrastructure Teardown
+
+**Important: App Configuration Private Network Constraint**
+
+The App Configuration store is private-network only. When running `terraform destroy` from your local machine, Terraform cannot read the private data plane and will fail with a 403 "ip-address-rejected" error when checking App Configuration state. Running destroy from the jumpbox is not viable because the jumpbox managed identity lacks the permissions to destroy the infrastructure that hosts it.
+
+**Workaround: Exclude App Configuration from Terraform State Before Destroy**
+
+Before running destroy, remove the App Configuration key resource from Terraform state to prevent the read attempt:
+
+```bash
+terraform -chdir=infra/terraform/azure state rm \
+    'module.data_services.azurerm_app_configuration_key.webhook_registry["registry"]'
+```
+
+Then proceed with the standard destroy:
+
+```bash
+bash ./infra/scripts/99-destroy-all.sh -e "${TARGET_ENV}"
+```
+
+After the destroy completes, manually delete the orphaned App Configuration store from the Azure Portal:
+1. Navigate to the resource group `rg-dlq-msg-router-<env>`.
+2. Locate the App Configuration store (`appcfg-dlq-<env>-*`).
+3. Click **Delete** to remove it.
+
+**Standard Teardown from Local:**
+
 From the **local laptop terminal**, execute the teardown script to destroy all compute and networking resources. This standard execution deliberately preserves the Storage Account and Key Vault so the Terraform state remains intact.
 
 ```bash

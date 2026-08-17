@@ -59,7 +59,7 @@ resource "azurerm_container_app" "dlq_agent" {
 
     container {
       name   = "router-agent"
-      image  = "${var.acr_login_server}/router-agent:${var.container_image_tag}"
+      image  = "${var.acr_login_server}/router-agent:${var.router_container_image_tag}"
       cpu    = var.container_cpu
       memory = var.container_memory
 
@@ -112,7 +112,7 @@ resource "azurerm_container_app" "notification_worker" {
 
     container {
       name    = "notification-worker"
-      image   = "${var.acr_login_server}/router-agent:${var.container_image_tag}"
+      image   = "${var.acr_login_server}/router-agent:${var.notification_container_image_tag}"
       command = ["python", "-m", "src.run_notifications"]
       cpu     = var.container_cpu
       memory  = var.container_memory
